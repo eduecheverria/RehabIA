@@ -203,8 +203,10 @@ def detect_markers(emg, srate, threshold, time_after, time_before, after_a, befo
     --------
     array : Índices de los marcadores detectados
     """
+
+    emg_rect = np.abs(emg)
     # Normalizar señal EMG entre 0 y 1
-    emg_scaled = (emg - np.min(emg)) / (np.max(emg) - np.min(emg))
+    emg_scaled = (emg_rect - np.min(emg_rect)) / (np.max(emg_rect) - np.min(emg_rect))
 
     # Detectar cruces por umbral
     emg_binary = emg_scaled > threshold
