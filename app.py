@@ -741,9 +741,9 @@ if uploaded_file is not None:
             )
             return fig_burst
         
-        # Crear columnas para los sliders
-        col1, col2, col3 = st.columns(3)
-        
+        #Parametros Burst
+        col1, col2= st.columns(2)
+
         with col1:
             st.subheader("🎯 Umbrales de Amplitud")
             threshold_slider = st.slider(
@@ -783,109 +783,108 @@ if uploaded_file is not None:
                 min_value=100, max_value=2000, value=400, step=10,
                 help="Duración mínima entre bursts consecutivos"
             ) / 1000  # Convertir a segundos
-        
-        window_start_time = 0
-        window_end_time = total_duration
+    
         
             
             
         
         
         # Crear y mostrar la visualización interactiva
-        if show_burst_pattern and (update_realtime or st.button("🔄 Actualizar Visualización")):
-            try:
-                with st.spinner("Generando visualización sincronizada..."):
-                    fig_interactive = create_burst_visualization(
-                        threshold_slider, after_a_slider, before_a_slider,
-                        time_after_slider, time_before_slider, duration_slider,
-                        emg, srate, window_start_time
-                    )
+        window_start_time = 0
+        
+        try:
+            with st.spinner("Generando visualización sincronizada..."):
+                fig_interactive = create_burst_visualization(
+                    threshold_slider, after_a_slider, before_a_slider,
+                    time_after_slider, time_before_slider, duration_slider,
+                    emg_filtered, srate, window_start_time
+                )
+                
+                # Agregar controles de zoom si se desea
+                add_zoom_controls(fig_interactive, window_start_time, 3.0)
+            
+            
+            
+            st.plotly_chart(fig_interactive, use_container_width=True, key=f"burst_viz_{window_start_time}")
+            
+            # Mostrar estadísticas predictivas mejoradas
+            st.markdown("### Análisis en Tiempo Real")
+            
+            # Analizar solo la ventana actual
+            window_samples = int(3.0 * srate)
+            start_idx = int(window_start_time * srate)
+            end_idx = min(len(emg_filtered), start_idx + window_samples)
+            
+            if end_idx > start_idx:
+                emg_window_analysis = emg_filtered[start_idx:end_idx]
+                emg_rect_analysis = np.abs(emg_window_analysis)
+                
+                if np.max(emg_rect_analysis) - np.min(emg_rect_analysis) > 0:
+                    emg_scaled_analysis = (emg_rect_analysis - np.min(emg_rect_analysis)) / (np.max(emg_rect_analysis) - np.min(emg_rect_analysis))
                     
-                    # Agregar controles de zoom si se desea
-                    add_zoom_controls(fig_interactive, window_start_time, 3.0)
-                
-               
-                
-                st.plotly_chart(fig_interactive, use_container_width=True, key=f"burst_viz_{window_start_time}")
-                
-                # Mostrar estadísticas predictivas mejoradas
-                st.markdown("### Análisis en Tiempo Real")
-                
-                # Analizar solo la ventana actual
-                window_samples = int(3.0 * srate)
-                start_idx = int(window_start_time * srate)
-                end_idx = min(len(emg), start_idx + window_samples)
-                
-                if end_idx > start_idx:
-                    emg_window_analysis = emg[start_idx:end_idx]
-                    emg_rect_analysis = np.abs(emg_window_analysis)
+                    # Estadísticas de la ventana actual
+                    above_threshold_window = np.sum(emg_scaled_analysis > threshold_slider)
+                    percentage_above_window = (above_threshold_window / len(emg_scaled_analysis)) * 100
                     
-                    if np.max(emg_rect_analysis) - np.min(emg_rect_analysis) > 0:
-                        emg_scaled_analysis = (emg_rect_analysis - np.min(emg_rect_analysis)) / (np.max(emg_rect_analysis) - np.min(emg_rect_analysis))
-                        
-                        # Estadísticas de la ventana actual
-                        above_threshold_window = np.sum(emg_scaled_analysis > threshold_slider)
-                        percentage_above_window = (above_threshold_window / len(emg_scaled_analysis)) * 100
-                        
-                        # Detectar cruces de umbral en la ventana
-                        emg_binary_window = emg_scaled_analysis > threshold_slider
-                        emg_diff_window = np.diff(emg_binary_window.astype(int))
-                        potential_onsets_window = len(np.where(emg_diff_window == 1)[0])
-                        
-                        # Calcular calidad promedio en la ventana
-                        mean_amplitude = np.mean(emg_scaled_analysis)
-                        std_amplitude = np.std(emg_scaled_analysis)
-                        
-                        col1, col2, col3, col4 = st.columns(4)
-                        with col1:
-                            st.metric(
-                                "% > Umbral (Ventana)", 
-                                f"{percentage_above_window:.1f}%",
-                                delta=f"vs {threshold_slider*100:.1f}% esperado"
-                            )
-                        with col2:
-                            st.metric(
-                                "Cruces Detectados", 
-                                potential_onsets_window,
-                                delta="en ventana actual"
-                            )
-                        with col3:
-                            st.metric(
-                                "Amplitud Media", 
-                                f"{mean_amplitude:.3f}",
-                                delta=f"±{std_amplitude:.3f}"
-                            )
-                        with col4:
-                            # Calcular un índice de calidad
-                            if percentage_above_window > 0:
-                                quality_index = min(100, (potential_onsets_window / max(1, percentage_above_window/20)) * 100)
-                            else:
-                                quality_index = 0
-                            
-                            st.metric(
-                                "Índice Calidad", 
-                                f"{quality_index:.0f}%",
-                                delta="configuración actual"
-                            )
-                        
-                        # Alertas y recomendaciones
-                        if percentage_above_window > 50:
-                            st.warning("⚠️ **Umbral muy bajo:** Considera aumentar el umbral principal")
-                        elif percentage_above_window < 5:
-                            st.warning("⚠️ **Umbral muy alto:** Considera reducir el umbral principal")
-                        elif 10 <= percentage_above_window <= 30:
-                            st.success("✅ **Configuración óptima:** El umbral parece adecuado")
-                        
-                        # Recomendaciones dinámicas
-                        if potential_onsets_window == 0:
-                            st.info("💡 **Sugerencia:** Reduce el umbral o verifica los parámetros temporales")
-                        elif potential_onsets_window > 10:
-                            st.info("💡 **Sugerencia:** Considera aumentar la duración mínima del burst")
+                    # Detectar cruces de umbral en la ventana
+                    emg_binary_window = emg_scaled_analysis > threshold_slider
+                    emg_diff_window = np.diff(emg_binary_window.astype(int))
+                    potential_onsets_window = len(np.where(emg_diff_window == 1)[0])
                     
+                    # Calcular calidad promedio en la ventana
+                    mean_amplitude = np.mean(emg_scaled_analysis)
+                    std_amplitude = np.std(emg_scaled_analysis)
+                    
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric(
+                            "% > Umbral (Ventana)", 
+                            f"{percentage_above_window:.1f}%",
+                            delta=f"vs {threshold_slider*100:.1f}% esperado"
+                        )
+                    with col2:
+                        st.metric(
+                            "Cruces Detectados", 
+                            potential_onsets_window,
+                            delta="en ventana actual"
+                        )
+                    with col3:
+                        st.metric(
+                            "Amplitud Media", 
+                            f"{mean_amplitude:.3f}",
+                            delta=f"±{std_amplitude:.3f}"
+                        )
+                    with col4:
+                        # Calcular un índice de calidad
+                        if percentage_above_window > 0:
+                            quality_index = min(100, (potential_onsets_window / max(1, percentage_above_window/20)) * 100)
+                        else:
+                            quality_index = 0
+                        
+                        st.metric(
+                            "Índice Calidad", 
+                            f"{quality_index:.0f}%",
+                            delta="configuración actual"
+                        )
+                    
+                    # Alertas y recomendaciones
+                    if percentage_above_window > 50:
+                        st.warning("⚠️ **Umbral muy bajo:** Considera aumentar el umbral principal")
+                    elif percentage_above_window < 5:
+                        st.warning("⚠️ **Umbral muy alto:** Considera reducir el umbral principal")
+                    elif 10 <= percentage_above_window <= 30:
+                        st.success("✅ **Configuración óptima:** El umbral parece adecuado")
+                    
+                    # Recomendaciones dinámicas
+                    if potential_onsets_window == 0:
+                        st.info("💡 **Sugerencia:** Reduce el umbral o verifica los parámetros temporales")
+                    elif potential_onsets_window > 10:
+                        st.info("💡 **Sugerencia:** Considera aumentar la duración mínima del burst")
+                
 
-            except Exception as e:
-                st.error(f"Error al procesar las señales: {str(e)}")
-                st.error("Verifica que los índices de canal sean correctos y que el archivo contenga datos numéricos.")
+        except Exception as e:
+            st.error(f"Error al procesar las señales: {str(e)}")
+            st.error("Verifica que los índices de canal sean correctos y que el archivo contenga datos numéricos.")
         # Botones de configuración preestablecida
         st.subheader("🎛️ Configuraciones Preestablecidas")
         
