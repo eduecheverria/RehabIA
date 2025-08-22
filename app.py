@@ -6,7 +6,7 @@ from plotly.subplots import make_subplots
 import scipy.signal as signal
 from scipy import stats
 import io
-from processing import detect_markers, apply_filters, calculate_features, spectral_analysis
+from processing import detect_markers, apply_filters, calculate_features, spectral_analysis, create_emg_timeseries_with_markers
 
 # Configuración de la página
 st.set_page_config(
@@ -25,8 +25,8 @@ st.markdown("""
         margin-bottom: 2rem;
     }
     .section-header {
-        background: linear-gradient(90deg, #1f77b4, #ff7f0e);
-        color: white;
+        background: white;
+        color: black;
         padding: 10px;
         border-radius: 5px;
         margin: 20px 0 10px 0;
@@ -148,6 +148,28 @@ st.markdown("""
         border-color: #f39c12;
         background-color: rgba(243, 156, 18, 0.1);
     }
+            
+    .synchronized-plots {
+        border: 2px solid #e0e0e0;
+        border-radius: 10px;
+        padding: 15px;
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        margin: 15px 0;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    
+    .plot-instructions {
+        background: linear-gradient(45deg, #667eea, #764ba2);
+        color: white;
+        padding: 10px 15px;
+        border-radius: 8px;
+        margin: 10px 0;
+        font-size: 14px;
+    }
+    
+    .plot-instructions strong {
+        color: #ffd700;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -173,6 +195,8 @@ with st.sidebar:
         format_func=lambda x: "Auto-detect" if x is None else f"'{x}'"
     )
 
+    rename_columns = True
+
 # Función para cargar y procesar datos
 @st.cache_data
 def load_data(file, sep):
@@ -194,48 +218,74 @@ if uploaded_file is not None:
     if error:
         st.error(f"Error al cargar el archivo: {error}")
         st.stop()
+    
+    # Opción de renombrar columnas (del segundo archivo)
+    if rename_columns:
+        cols = ['Tiempo']
+        if df.shape[1] > 1:
+            cols.append('EEG-1')
+        if df.shape[1] > 2:
+            cols.append('EEG-2')
+        if df.shape[1] > 3:
+            eeg_cols = [f'EMG-{i}' for i in range(1, df.shape[1] - 2)]
+            cols.extend(eeg_cols)
+        
+        df.columns = cols[:df.shape[1]]  
+    
 
-    # Información del dataset
-    st.markdown('<div class="section-header"><h3>📊 Información del Dataset</h3></div>', unsafe_allow_html=True)
-
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Filas", df.shape[0])
-    with col2:
-        st.metric("Columnas", df.shape[1])
-    with col3:
-        st.metric("Tamaño (MB)", f"{uploaded_file.size / (1024*1024):.2f}")
-    with col4:
-        st.metric("Tipo de archivo", uploaded_file.type)
+    
+    
 
     # Vista previa de los datos
+
     with st.expander("🔍 Vista previa de los datos"):
+        if rename_columns:
+            st.subheader("Vista previa con encabezados personalizados")
         st.dataframe(df.head(10))
 
         # Estadísticas básicas
         st.subheader("Estadísticas básicas")
         st.dataframe(df.describe())
 
-    # Configuración de canales y parámetros
-    st.markdown('<div class="section-header"><h3>🎛️ Configuración de Análisis</h3></div>', unsafe_allow_html=True)
+        # Configuración de canales y parámetros
+    st.markdown('<div class="section-header"><h3>🎛 Configuración de Análisis</h3></div>', unsafe_allow_html=True)
 
     col1, col2 = st.columns(2)
 
     with col1:
         st.subheader("Configuración de Canales")
-        max_col = df.shape[1] - 1
-        eeg_channel = st.number_input(
-            "Canal EEG (índice de columna)",
-            min_value=0, max_value=max_col, value=0, step=1
-        )
-        emg_channel = st.number_input(
-            "Canal EMG (índice de columna)",
-            min_value=0, max_value=max_col, value=min(1, max_col), step=1
-        )
+        
+        # Opción mejorada del segundo archivo con selectbox
+        if rename_columns and len(df.columns) > 1:
+            eeg_channel_name = st.selectbox(
+                "Canal EEG",
+                options=df.columns,
+                index=0
+            )
+            emg_channel_name = st.selectbox(
+                "Canal EMG",
+                options=df.columns,
+                index=min(1, len(df.columns)-1)
+            )
+            # Obtener índices de las columnas seleccionadas
+            eeg_channel = df.columns.get_loc(eeg_channel_name)
+            emg_channel = df.columns.get_loc(emg_channel_name)
+        else:
+            # Configuración original de app_rafa.py
+            max_col = df.shape[1] - 1
+            eeg_channel = st.number_input(
+                "Canal EEG (índice de columna)",
+                min_value=0, max_value=max_col, value=0, step=1
+            )
+            emg_channel = st.number_input(
+                "Canal EMG (índice de columna)",
+                min_value=0, max_value=max_col, value=min(1, max_col), step=1
+            )
+            
         srate = st.number_input(
             "Frecuencia de muestreo (Hz)",
-            min_value=1, max_value=10000, value=1000, step=1
-        )
+            min_value=1, max_value=10000, value=1000, step=1)
+
 
     with col2:
         st.subheader("Filtros de Señal")
@@ -245,184 +295,106 @@ if uploaded_file is not None:
             lowpass_freq = st.number_input("Filtro pasa-bajo (Hz)", min_value=1.0, max_value=500.0, value=100.0, step=1.0)
             notch_freq = st.number_input("Filtro notch (Hz)", min_value=40.0, max_value=70.0, value=50.0, step=1.0)
 
-    # Extraer y procesar señales
+   # Extraer y procesar señales
     try:
-        eeg_raw = df.iloc[:, int(eeg_channel)].values
-        emg_raw = df.iloc[:, int(emg_channel)].values
+        eeg_raw = df[eeg_channel_name].values
+        emg_raw = df[emg_channel_name].values
 
-        # Aplicar filtros si está habilitado
         if apply_filtering:
-            eeg = apply_filters(eeg_raw, srate, highpass_freq, lowpass_freq, notch_freq)
-            emg = apply_filters(emg_raw, srate, highpass_freq, lowpass_freq, notch_freq)
+            eeg_filtered = apply_filters(eeg_raw, srate, highpass_freq, lowpass_freq, notch_freq)
+            emg_filtered = apply_filters(emg_raw, srate, highpass_freq, lowpass_freq, notch_freq)
         else:
-            eeg = eeg_raw
-            emg = emg_raw
+            eeg_filtered = eeg_raw
+            emg_filtered = emg_raw
 
-        # Remover media del EMG
-        emg = emg - np.mean(emg)
-
-        # Vector de tiempo
-        ttime = np.arange(0, len(eeg)/srate, 1/srate)[:len(eeg)]
+        emg_filtered = emg_filtered - np.mean(emg_filtered)
+        
+        ttime = np.arange(0, len(eeg_filtered)/srate, 1/srate)[:len(eeg_filtered)]
+        total_duration = ttime[-1]
 
         # Visualización de señales
         st.markdown('<div class="section-header"><h3>📈 Visualización de Señales</h3></div>', unsafe_allow_html=True)
 
-        # Controles de visualización
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            show_raw = st.checkbox("Mostrar señales sin filtrar", value=False)
-        with col2:
-            time_window = st.slider("Ventana de tiempo (seg)", min_value=1, max_value=min(500, int(len(eeg)/srate)), value=min(10, int(len(eeg)/srate)))
-        with col3:
-            start_time = st.slider("Tiempo de inicio (seg)", min_value=0, max_value=max(0, int(len(eeg)/srate) - time_window), value=0)
+        st.info("Utiliza el selector de rango de tiempo para enfocar un área específica.")
 
-        # Crear gráfico
-        fig = make_subplots(
-            rows=2, cols=1,
-            subplot_titles=('Señal EEG', 'Señal EMG'),
-            vertical_spacing=0.1
+        col_eeg, col_emg = st.columns(2)
+        with col_eeg:
+            st.subheader(f"Señal {eeg_channel_name}")
+            fig_eeg = go.Figure(data=go.Scatter(x=ttime, y=eeg_filtered, mode='lines', name=eeg_channel_name, line=dict(color='blue')))
+            fig_eeg.update_layout(height=300, title=f"Señal {eeg_channel_name} Completa", xaxis_title="Tiempo (s)", yaxis_title="Amplitud (µV)")
+            st.plotly_chart(fig_eeg, use_container_width=True)
+
+        with col_emg:
+            st.subheader(f"Señal {emg_channel_name}")
+            fig_emg = go.Figure(data=go.Scatter(x=ttime, y=emg_filtered, mode='lines', name=emg_channel_name, line=dict(color='green')))
+            fig_emg.update_layout(height=300, title=f"Señal {emg_channel_name} Completa", xaxis_title="Tiempo (s)", yaxis_title="Amplitud (µV)")
+            st.plotly_chart(fig_emg, use_container_width=True)
+
+      
+        
+
+
+        fig_zoomed = go.Figure()
+        fig_zoomed.add_trace(go.Scatter(x=ttime, y=eeg_filtered, mode='lines', name=eeg_channel_name, line=dict(color='blue')))
+        fig_zoomed.add_trace(go.Scatter(x=ttime, y=emg_filtered, mode='lines', name=emg_channel_name, line=dict(color='green')))
+        fig_zoomed.update_layout(
+            height=450,
+            title=f"Ventana de Análisis",
+            xaxis_title="Tiempo (s)",
+            yaxis_title="Amplitud (µV)",
+            legend=dict(x=0, y=1.1, orientation='h')
         )
+        st.plotly_chart(fig_zoomed, use_container_width=True)
 
-        # Filtrar datos para la ventana de tiempo
+        zoom_range = st.slider(
+            "Selecciona el rango de tiempo (s) para hacer zoom:",
+            min_value=0.0,
+            max_value=total_duration,
+            value=(0.0, min(total_duration, 10.0)),
+            step=0.1
+        )
+        start_time, end_time = zoom_range
         start_idx = int(start_time * srate)
-        end_idx = int((start_time + time_window) * srate)
-        time_slice = slice(start_idx, end_idx)
+        end_idx = int(end_time * srate)
+        
+        ttime_zoomed = ttime[start_idx:end_idx]
+        eeg_zoomed = eeg_filtered[start_idx:end_idx]
+        emg_zoomed = emg_filtered[start_idx:end_idx]
+        
+       
 
-        # EEG plot
-        fig.add_trace(
-            go.Scatter(
-                x=ttime[time_slice],
-                y=eeg[time_slice],
-                mode='lines',
-                name='EEG Filtrado',
-                line=dict(color='orange', width=1)
-            ),
-            row=1, col=1
-        )
-
-        if show_raw:
-            fig.add_trace(
-                go.Scatter(
-                    x=ttime[time_slice],
-                    y=eeg_raw[time_slice],
-                    mode='lines',
-                    name='EEG Crudo',
-                    line=dict(color='yellow', width=1),
-                    opacity=0.6
-                ),
-                row=1, col=1
-            )
-
-        # EMG plot
-        fig.add_trace(
-            go.Scatter(
-                x=ttime[time_slice],
-                y=emg[time_slice],
-                mode='lines',
-                name='EMG Filtrado',
-                line=dict(color='red', width=1)
-            ),
-            row=2, col=1
-        )
-
-        if show_raw:
-            fig.add_trace(
-                go.Scatter(
-                    x=ttime[time_slice],
-                    y=emg_raw[time_slice],
-                    mode='lines',
-                    name='EMG Crudo',
-                    line=dict(color='pink', width=1),
-                    opacity=0.6
-                ),
-                row=2, col=1
-            )
-
-        fig.update_layout(
-            height=600,
-            title_text="Análisis de Señales EEG/EMG",
-            showlegend=True
-        )
-
-        fig.update_xaxes(title_text="Tiempo (s)")
-        fig.update_yaxes(title_text="Amplitud (µV)", row=1, col=1)
-        fig.update_yaxes(title_text="Amplitud (µV)", row=2, col=1)
-
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Análisis de características
-        st.markdown('<div class="section-header"><h3>🔬 Análisis de Características</h3></div>', unsafe_allow_html=True)
-
-        eeg_features = calculate_features(eeg, srate)
-        emg_features = calculate_features(emg, srate)
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            st.subheader("📊 Características EEG")
-            st.metric("RMS", f"{eeg_features['rms']:.3f}")
-            st.metric("Media", f"{eeg_features['mean']:.3f}")
-            st.metric("Desv. Estándar", f"{eeg_features['std']:.3f}")
-            st.metric("Potencia Total", f"{eeg_features['total_power']:.3f}")
-
-        with col2:
-            st.subheader("📊 Características EMG")
-            st.metric("RMS", f"{emg_features['rms']:.3f}")
-            st.metric("Media", f"{emg_features['mean']:.3f}")
-            st.metric("Desv. Estándar", f"{emg_features['std']:.3f}")
-            st.metric("Potencia Total", f"{emg_features['total_power']:.3f}")
+       
 
         # Análisis espectral
         st.markdown('<div class="section-header"><h3>🌊 Análisis Espectral</h3></div>', unsafe_allow_html=True)
-
         if st.button("🔍 Realizar Análisis Espectral"):
-            eeg_spectrum = spectral_analysis(eeg, srate)
-            emg_spectrum = spectral_analysis(emg, srate)
-
+            eeg_spectrum = spectral_analysis(eeg_filtered, srate)
+            emg_spectrum = spectral_analysis(emg_filtered, srate)
             fig_spectrum = make_subplots(
                 rows=1, cols=2,
-                subplot_titles=('Espectro EEG', 'Espectro EMG')
+                subplot_titles=(f"Espectro {eeg_channel_name}", f"Espectro {emg_channel_name}")
             )
-
-            fig_spectrum.add_trace(
-                go.Scatter(
-                    x=eeg_spectrum['freqs'],
-                    y=eeg_spectrum['psd'],
-                    mode='lines',
-                    name='PSD EEG'
-                ),
-                row=1, col=1
-            )
-
-            fig_spectrum.add_trace(
-                go.Scatter(
-                    x=emg_spectrum['freqs'],
-                    y=emg_spectrum['psd'],
-                    mode='lines',
-                    name='PSD EMG'
-                ),
-                row=1, col=2
-            )
-
+            fig_spectrum.add_trace(go.Scatter(x=eeg_spectrum['freqs'], y=eeg_spectrum['psd'], mode='lines', name=f"PSD {eeg_channel_name}"), row=1, col=1)
+            fig_spectrum.add_trace(go.Scatter(x=emg_spectrum['freqs'], y=emg_spectrum['psd'], mode='lines', name=f"PSD {emg_channel_name}"), row=1, col=2)
             fig_spectrum.update_layout(height=400, title_text="Análisis de Densidad Espectral de Potencia")
             fig_spectrum.update_xaxes(title_text="Frecuencia (Hz)")
             fig_spectrum.update_yaxes(title_text="PSD (µV²/Hz)", type="log")
-
             st.plotly_chart(fig_spectrum, use_container_width=True)
 
         
 
 
         # Configuración interactiva de parámetros de burst
-        st.markdown('<div class="section-header"><h3>⚙️ Configuración Interactiva de Parámetros de Burst</h3></div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-header"><h3> Burst</h3></div>', unsafe_allow_html=True)
         
         # Función para crear visualización interactiva del burst
         def create_burst_visualization(threshold, after_a, before_a, time_after, time_before, duration, emg_sample, srate_sample, window_start_time=0):
             """
-            Crea una visualización interactiva del burst ideal y la señal EMG
+            Crea una visualización interactiva del burst ideal y la señal EMG con ejes sincronizados
+            Incluye rectángulos para mostrar las ventanas temporales de validación
             """
-                # Configuración de ventana deslizante
-            window_duration = 3.0  # 3 segundos de visualización (aumentado para mejor vista)
+            # Configuración de ventana deslizante
+            window_duration = 20  # segundos de visualización
             samples_window = int(window_duration * srate_sample)
             
             # Calcular índices basados en el tiempo de inicio seleccionado
@@ -444,14 +416,15 @@ if uploaded_file is not None:
             
             # Vector de tiempo ajustado al tiempo real
             time_window = (np.arange(len(emg_window)) / srate_sample) + window_start_time
-    
-            
-            # Crear figura con subplots
+
+            # Crear figura con subplots - LA CLAVE ES shared_xaxes=True
             fig_burst = make_subplots(
                 rows=2, cols=1,
-                subplot_titles=('Señal EMG con Parámetros de Burst', 'Patrón de Burst Ideal'),
-                vertical_spacing=0.15,
-                row_heights=[0.6, 0.4]
+                subplot_titles=('Señal EMG con Parámetros de Burst', 'Patrón de Burst Ideal con Ventanas de Validación'),
+                vertical_spacing=0.12,
+                row_heights=[0.6, 0.4],
+                shared_xaxes=True,  # ESTO SINCRONIZA AUTOMÁTICAMENTE EL ZOOM Y PAN
+                x_title="Tiempo (s)"
             )
             
             # Plot 1: Señal EMG real con líneas de referencia
@@ -461,68 +434,175 @@ if uploaded_file is not None:
                     y=emg_scaled,
                     mode='lines',
                     name='EMG Normalizado',
-                    line=dict(color='lightblue', width=1.5)
+                    line=dict(color='lightblue', width=1.5),
+                    showlegend=True
                 ),
                 row=1, col=1
             )
             
-            # Líneas de umbral
+            # Líneas de umbral en el primer subplot
             fig_burst.add_hline(
                 y=threshold, line_dash="solid", line_color="red", line_width=2,
                 annotation_text=f"Umbral Principal ({threshold:.2f})",
+                annotation_position="bottom right",
                 row=1, col=1
             )
             
             fig_burst.add_hline(
                 y=after_a, line_dash="dash", line_color="orange", line_width=2,
                 annotation_text=f"Amplitud Después ({after_a:.2f})",
+                annotation_position="top left",
                 row=1, col=1
             )
             
             fig_burst.add_hline(
                 y=before_a, line_dash="dot", line_color="green", line_width=2,
                 annotation_text=f"Amplitud Antes ({before_a:.2f})",
+                annotation_position="top right",
                 row=1, col=1
             )
             
-            # Plot 2: Patrón de burst ideal
-            burst_time_total = time_before + duration + time_after
+            # Plot 2: Patrón de burst ideal - ALINEADO CON LA VENTANA DE TIEMPO
+            burst_time_total = min(time_before + duration + time_after, window_duration)
             burst_samples = int(burst_time_total * srate_sample)
-            burst_time = np.linspace(0, burst_time_total, burst_samples)
+            
+            # Tiempo del burst alineado con la ventana actual
+            burst_time_start = window_start_time + (window_duration - burst_time_total) / 2  # Centrar el burst
+            burst_time = np.linspace(burst_time_start, burst_time_start + burst_time_total, burst_samples)
             
             # Crear patrón de burst idealizado
             burst_pattern = np.zeros(burst_samples)
             
             # Fase antes del burst (baja amplitud)
             before_samples = int(time_before * srate_sample)
-            burst_pattern[:before_samples] = before_a * 0.8  # Ligeramente por debajo del umbral
+            burst_pattern[:before_samples] = before_a * 0.8
             
             # Fase de burst (alta amplitud)
             burst_samples_active = int(duration * srate_sample)
             burst_start = before_samples
-            burst_end = burst_start + burst_samples_active
+            burst_end = min(burst_start + burst_samples_active, len(burst_pattern))
             
             # Crear forma de burst (rampa ascendente, plateau, rampa descendente)
-            ramp_samples = min(burst_samples_active // 4, int(0.05 * srate_sample))  # 50ms o 1/4 del burst
+            ramp_samples = min(burst_samples_active // 4, int(0.05 * srate_sample))
             
-            # Rampa ascendente
-            burst_pattern[burst_start:burst_start + ramp_samples] = np.linspace(
-                before_a * 0.8, threshold * 1.5, ramp_samples
-            )
-            
-            # Plateau
-            burst_pattern[burst_start + ramp_samples:burst_end - ramp_samples] = threshold * 1.5
-            
-            # Rampa descendente
-            burst_pattern[burst_end - ramp_samples:burst_end] = np.linspace(
-                threshold * 1.5, after_a * 1.2, ramp_samples
-            )
+            if ramp_samples > 0 and burst_end > burst_start:
+                # Rampa ascendente
+                end_ramp_up = min(burst_start + ramp_samples, burst_end)
+                if end_ramp_up > burst_start:
+                    burst_pattern[burst_start:end_ramp_up] = np.linspace(
+                        before_a * 0.8, threshold * 1.5, end_ramp_up - burst_start
+                    )
+                
+                # Plateau
+                start_plateau = end_ramp_up
+                end_plateau = max(burst_end - ramp_samples, start_plateau)
+                if end_plateau > start_plateau:
+                    burst_pattern[start_plateau:end_plateau] = threshold * 1.5
+                
+                # Rampa descendente
+                if burst_end > end_plateau:
+                    burst_pattern[end_plateau:burst_end] = np.linspace(
+                        threshold * 1.5, after_a * 1.2, burst_end - end_plateau
+                    )
+            else:
+                # Si no hay suficiente espacio para rampas, solo plateau
+                burst_pattern[burst_start:burst_end] = threshold * 1.5
             
             # Fase después del burst
-            after_samples = int(time_after * srate_sample)
             if burst_end < len(burst_pattern):
-                burst_pattern[burst_end:] = after_a * 1.2  # Ligeramente por encima del umbral after_a
+                burst_pattern[burst_end:] = after_a * 1.2
             
+            # NUEVO: Agregar rectángulos para las ventanas temporales
+            
+            # Definir posiciones temporales del burst
+            burst_actual_start = burst_time_start + time_before
+            burst_actual_end = burst_actual_start + duration
+            
+            # Ventana "ANTES" del burst - Rectángulo verde semitransparente
+            rect_before_start = burst_actual_start - time_before
+            rect_before_end = burst_actual_start
+            
+            if rect_before_start >= burst_time_start and rect_before_end <= burst_time_start + burst_time_total:
+                fig_burst.add_shape(
+                    type="rect",
+                    x0=rect_before_start,
+                    x1=rect_before_end,
+                    y0=0,
+                    y1=before_a,
+                    fillcolor="rgba(46, 204, 113, 0.3)",  # Verde semitransparente
+                    line=dict(color="rgba(46, 204, 113, 0.8)", width=2),
+                    row=2, col=1
+                )
+                
+                # Etiqueta para la ventana "antes"
+                fig_burst.add_annotation(
+                    x=(rect_before_start + rect_before_end) / 2,
+                    y=before_a / 2,
+                    text=f"ANTES<br>{time_before*1000:.0f}ms",
+                    showarrow=False,
+                    font=dict(color="white", size=10, family="Arial Black"),
+                    bgcolor="rgba(46, 204, 113, 0.8)",
+                    bordercolor="white",
+                    borderwidth=1,
+                    row=2, col=1
+                )
+            
+            # Ventana "DESPUÉS" del burst - Rectángulo naranja semitransparente
+            rect_after_start = burst_actual_end
+            rect_after_end = burst_actual_end + time_after
+            
+            if rect_after_start >= burst_time_start and rect_after_end <= burst_time_start + burst_time_total:
+                fig_burst.add_shape(
+                    type="rect",
+                    x0=rect_after_start,
+                    x1=rect_after_end,
+                    y0=0,
+                    y1=after_a,
+                    fillcolor="rgba(243, 156, 18, 0.3)",  # Naranja semitransparente
+                    line=dict(color="rgba(243, 156, 18, 0.8)", width=2),
+                    row=2, col=1
+                )
+                
+                # Etiqueta para la ventana "después"
+                fig_burst.add_annotation(
+                    x=(rect_after_start + rect_after_end) / 2,
+                    y=after_a / 2,
+                    text=f"DESPUÉS<br>{time_after*1000:.0f}ms",
+                    showarrow=False,
+                    font=dict(color="white", size=10, family="Arial Black"),
+                    bgcolor="rgba(243, 156, 18, 0.8)",
+                    bordercolor="white",
+                    borderwidth=1,
+                    row=2, col=1
+                )
+            
+            # NUEVO: Rectángulo para la duración del burst - Rojo semitransparente
+            if burst_actual_start >= burst_time_start and burst_actual_end <= burst_time_start + burst_time_total:
+                fig_burst.add_shape(
+                    type="rect",
+                    x0=burst_actual_start,
+                    x1=burst_actual_end,
+                    y0=threshold,
+                    y1=threshold * 1.5,
+                    fillcolor="rgba(231, 76, 60, 0.2)",  # Rojo semitransparente
+                    line=dict(color="rgba(231, 76, 60, 0.8)", width=2, dash="dash"),
+                    row=2, col=1
+                )
+                
+                # Etiqueta para la duración del burst
+                fig_burst.add_annotation(
+                    x=(burst_actual_start + burst_actual_end) / 2,
+                    y=threshold * 1.25,
+                    text=f"BURST<br>{duration*1000:.0f}ms",
+                    showarrow=False,
+                    font=dict(color="white", size=10, family="Arial Black"),
+                    bgcolor="rgba(231, 76, 60, 0.8)",
+                    bordercolor="white",
+                    borderwidth=1,
+                    row=2, col=1
+                )
+            
+            # Agregar el patrón de burst como antes
             fig_burst.add_trace(
                 go.Scatter(
                     x=burst_time,
@@ -530,12 +610,14 @@ if uploaded_file is not None:
                     mode='lines',
                     name='Burst Ideal',
                     line=dict(color='purple', width=3),
-                    fill='tonexty'
+                    fill='tozeroy',
+                    fillcolor='rgba(128, 0, 128, 0.1)',  # Reducir opacidad para que no tape los rectángulos
+                    showlegend=True
                 ),
                 row=2, col=1
             )
             
-            # Añadir líneas de referencia en el burst ideal
+            # Líneas de referencia en el burst ideal
             fig_burst.add_hline(
                 y=threshold, line_dash="solid", line_color="red", line_width=1,
                 row=2, col=1
@@ -551,28 +633,112 @@ if uploaded_file is not None:
                 row=2, col=1
             )
             
-            # Añadir anotaciones de tiempo en el burst ideal
-            fig_burst.add_vline(
-                x=time_before, line_dash="dashdot", line_color="gray",
-                annotation_text="Inicio Burst", row=2, col=1
-            )
+            # Líneas verticales para marcar inicio y fin del burst
+            if burst_actual_start >= burst_time_start and burst_actual_start <= burst_time_start + burst_time_total:
+                fig_burst.add_vline(
+                    x=burst_actual_start, line_dash="dashdot", line_color="gray",
+                    annotation_text="Inicio Burst", 
+                    annotation_position="top",
+                    row=2, col=1
+                )
             
-            fig_burst.add_vline(
-                x=time_before + duration, line_dash="dashdot", line_color="gray",
-                annotation_text="Fin Burst", row=2, col=1
-            )
+            if burst_actual_end >= burst_time_start and burst_actual_end <= burst_time_start + burst_time_total:
+                fig_burst.add_vline(
+                    x=burst_actual_end, line_dash="dashdot", line_color="gray",
+                    annotation_text="Fin Burst",
+                    annotation_position="top", 
+                    row=2, col=1
+                )
             
-            # Configuración del layout
+            # Configuración del layout optimizada para sincronización
             fig_burst.update_layout(
                 height=600,
-                title_text="Configuración Visual de Parámetros de Burst",
-                showlegend=True
+                title_text="Configuración Visual de Parámetros de Burst - Zoom Sincronizado ⚡",
+                showlegend=True,
+                hovermode='x unified',  # Hover unificado en ambos subplots
+                template='plotly_white',
+                font=dict(size=12),
+                
+                # Configurar márgenes para mejor visualización
+                margin=dict(l=50, r=50, t=80, b=50),
+                
+                # Rango inicial sincronizado
+                xaxis=dict(
+                    showticklabels=False,  # Ocultar labels del primer subplot
+                    range=[window_start_time, window_start_time + window_duration],
+                    showgrid=True,
+                    gridwidth=1,
+                    gridcolor='lightgray'
+                ),
+                xaxis2=dict(
+                    title="Tiempo (s)",
+                    range=[window_start_time, window_start_time + window_duration],
+                    showgrid=True,
+                    gridwidth=1,
+                    gridcolor='lightgray'
+                )
             )
             
-            fig_burst.update_xaxes(title_text="Tiempo (s)")
-            fig_burst.update_yaxes(title_text="Amplitud Normalizada", row=1, col=1)
-            fig_burst.update_yaxes(title_text="Amplitud", row=2, col=1)
+            # Configurar los ejes Y con mejor formato
+            fig_burst.update_yaxes(
+                title_text="Amplitud Normalizada", 
+                row=1, col=1,
+                showgrid=True,
+                gridwidth=1,
+                gridcolor='lightgray',
+                range=[-0.05, 1.05]  # Rango fijo para mejor comparación
+            )
             
+            fig_burst.update_yaxes(
+                title_text="Amplitud", 
+                row=2, col=1,
+                showgrid=True,
+                gridwidth=1,
+                gridcolor='lightgray',
+                range=[0, max(threshold * 1.8, after_a * 1.5, before_a * 1.5)]  # Rango dinámico basado en parámetros
+            )
+            
+            return fig_burst
+        
+        def add_zoom_controls(fig_burst, window_start_time, window_duration):
+            """
+            Agrega controles de zoom predefinidos como botones
+            """
+            # Agregar botones de zoom personalizados
+            fig_burst.update_layout(
+                updatemenus=[
+                    dict(
+                        type="buttons",
+                        direction="left",
+                        buttons=list([
+                            dict(
+                                args=[{"xaxis.range": [window_start_time, window_start_time + window_duration],
+                                    "xaxis2.range": [window_start_time, window_start_time + window_duration]}],
+                                label="Vista Completa",
+                                method="relayout"
+                            ),
+                            dict(
+                                args=[{"xaxis.range": [window_start_time, window_start_time + window_duration/2],
+                                    "xaxis2.range": [window_start_time, window_start_time + window_duration/2]}],
+                                label="Zoom 2x",
+                                method="relayout"
+                            ),
+                            dict(
+                                args=[{"xaxis.range": [window_start_time, window_start_time + window_duration/4],
+                                    "xaxis2.range": [window_start_time, window_start_time + window_duration/4]}],
+                                label="Zoom 4x",
+                                method="relayout"
+                            ),
+                        ]),
+                        pad={"r": 10, "t": 10},
+                        showactive=True,
+                        x=0.0,
+                        xanchor="left",
+                        y=1.15,
+                        yanchor="top"
+                    ),
+                ]
+            )
             return fig_burst
         
         # Crear columnas para los sliders
@@ -602,13 +768,13 @@ if uploaded_file is not None:
             st.subheader("⏱️ Parámetros Temporales")
             time_after_slider = st.slider(
                 "Tiempo Después (ms)",
-                min_value=1, max_value=100, value=20, step=1,
+                min_value=1, max_value=300, value=20, step=1,
                 help="Ventana temporal después del onset para validación"
             ) / 1000  # Convertir a segundos
             
             time_before_slider = st.slider(
                 "Tiempo Antes (ms)",
-                min_value=1, max_value=100, value=20, step=1,
+                min_value=1, max_value=300, value=20, step=1,
                 help="Ventana temporal antes del onset para validación"
             ) / 1000  # Convertir a segundos
             
@@ -618,94 +784,108 @@ if uploaded_file is not None:
                 help="Duración mínima entre bursts consecutivos"
             ) / 1000  # Convertir a segundos
         
-        with col3:
-            st.subheader("🎨 Opciones de Visualización")
-            show_burst_pattern = st.checkbox("Mostrar Patrón de Burst", value=True)
-            update_realtime = st.checkbox("Actualización en Tiempo Real", value=True)
+        window_start_time = 0
+        window_end_time = total_duration
+        
             
-            # NUEVO: Controles de ventana deslizante
-            st.subheader("📍 Navegación Temporal")
             
-            # Calcular duración total de la señal
-            total_duration = len(emg) / srate
-            window_duration = 3.0  # duración de la ventana de visualización
-            max_start_time = max(0, total_duration - window_duration)
-            
-            # Slider para posición temporal
-            window_start_time = st.slider(
-                "Posición en el tiempo (s)",
-                min_value=0.0,
-                max_value=max_start_time,
-                value=0.0,
-                step=0.1,
-                help=f"Desliza para navegar por los {total_duration:.1f}s de datos"
-            )
-            
-            # Información de la ventana actual
-            window_end_time = min(total_duration, window_start_time + window_duration)
-            st.caption(f"Mostrando: {window_start_time:.1f}s - {window_end_time:.1f}s")
-            
-            # Botones de navegación rápida
-            col_nav1, col_nav2, col_nav3 = st.columns(3)
-            with col_nav1:
-                if st.button("⏮️ Inicio"):
-                    st.session_state.window_start_time = 0.0
-                    st.experimental_rerun()
-            with col_nav2:
-                if st.button("⏯️ Centro"):
-                    st.session_state.window_start_time = max(0, (total_duration - window_duration) / 2)
-                    st.experimental_rerun()
-            with col_nav3:
-                if st.button("⏭️ Final"):
-                    st.session_state.window_start_time = max_start_time
-                    st.experimental_rerun()
-            
-            # Usar el valor del session_state si existe
-            if 'window_start_time' in st.session_state:
-                window_start_time = st.session_state.window_start_time
-            
-            if st.button("🔄 Actualizar Visualización"):
-                update_realtime = True
+        
         
         # Crear y mostrar la visualización interactiva
-        if show_burst_pattern and (update_realtime or st.button("Ver Configuración")):
+        if show_burst_pattern and (update_realtime or st.button("🔄 Actualizar Visualización")):
             try:
-                fig_interactive = create_burst_visualization(
-                    threshold_slider, after_a_slider, before_a_slider,
-                    time_after_slider, time_before_slider, duration_slider,
-                    emg, srate, window_start_time
-                )
-                st.plotly_chart(fig_interactive, use_container_width=True)
+                with st.spinner("Generando visualización sincronizada..."):
+                    fig_interactive = create_burst_visualization(
+                        threshold_slider, after_a_slider, before_a_slider,
+                        time_after_slider, time_before_slider, duration_slider,
+                        emg, srate, window_start_time
+                    )
+                    
+                    # Agregar controles de zoom si se desea
+                    add_zoom_controls(fig_interactive, window_start_time, 3.0)
                 
-                # Mostrar estadísticas predictivas
-                st.subheader("📊 Estadísticas Predictivas")
+               
                 
-                # Simular detección con parámetros actuales
-                emg_rect = np.abs(emg)
-                emg_scaled = (emg_rect - np.min(emg_rect)) / (np.max(emg_rect) - np.min(emg_rect))
+                st.plotly_chart(fig_interactive, use_container_width=True, key=f"burst_viz_{window_start_time}")
                 
-                # Contar cruces de umbral
-                above_threshold = np.sum(emg_scaled > threshold_slider)
-                percentage_above = (above_threshold / len(emg_scaled)) * 100
+                # Mostrar estadísticas predictivas mejoradas
+                st.markdown("### Análisis en Tiempo Real")
                 
-                # Estimación aproximada de detecciones
-                emg_binary = emg_scaled > threshold_slider
-                emg_diff = np.diff(emg_binary.astype(int))
-                potential_onsets = len(np.where(emg_diff == 1)[0])
+                # Analizar solo la ventana actual
+                window_samples = int(3.0 * srate)
+                start_idx = int(window_start_time * srate)
+                end_idx = min(len(emg), start_idx + window_samples)
                 
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.metric("% Señal > Umbral", f"{percentage_above:.1f}%")
-                with col2:
-                    st.metric("Cruces Potenciales", potential_onsets)
-                with col3:
-                    st.metric("Sensibilidad", "Alta" if threshold_slider < 0.3 else "Media" if threshold_slider < 0.5 else "Baja")
-                with col4:
-                    st.metric("Especificidad", "Baja" if before_a_slider > after_a_slider else "Media" if abs(before_a_slider - after_a_slider) < 0.1 else "Alta")
-                
+                if end_idx > start_idx:
+                    emg_window_analysis = emg[start_idx:end_idx]
+                    emg_rect_analysis = np.abs(emg_window_analysis)
+                    
+                    if np.max(emg_rect_analysis) - np.min(emg_rect_analysis) > 0:
+                        emg_scaled_analysis = (emg_rect_analysis - np.min(emg_rect_analysis)) / (np.max(emg_rect_analysis) - np.min(emg_rect_analysis))
+                        
+                        # Estadísticas de la ventana actual
+                        above_threshold_window = np.sum(emg_scaled_analysis > threshold_slider)
+                        percentage_above_window = (above_threshold_window / len(emg_scaled_analysis)) * 100
+                        
+                        # Detectar cruces de umbral en la ventana
+                        emg_binary_window = emg_scaled_analysis > threshold_slider
+                        emg_diff_window = np.diff(emg_binary_window.astype(int))
+                        potential_onsets_window = len(np.where(emg_diff_window == 1)[0])
+                        
+                        # Calcular calidad promedio en la ventana
+                        mean_amplitude = np.mean(emg_scaled_analysis)
+                        std_amplitude = np.std(emg_scaled_analysis)
+                        
+                        col1, col2, col3, col4 = st.columns(4)
+                        with col1:
+                            st.metric(
+                                "% > Umbral (Ventana)", 
+                                f"{percentage_above_window:.1f}%",
+                                delta=f"vs {threshold_slider*100:.1f}% esperado"
+                            )
+                        with col2:
+                            st.metric(
+                                "Cruces Detectados", 
+                                potential_onsets_window,
+                                delta="en ventana actual"
+                            )
+                        with col3:
+                            st.metric(
+                                "Amplitud Media", 
+                                f"{mean_amplitude:.3f}",
+                                delta=f"±{std_amplitude:.3f}"
+                            )
+                        with col4:
+                            # Calcular un índice de calidad
+                            if percentage_above_window > 0:
+                                quality_index = min(100, (potential_onsets_window / max(1, percentage_above_window/20)) * 100)
+                            else:
+                                quality_index = 0
+                            
+                            st.metric(
+                                "Índice Calidad", 
+                                f"{quality_index:.0f}%",
+                                delta="configuración actual"
+                            )
+                        
+                        # Alertas y recomendaciones
+                        if percentage_above_window > 50:
+                            st.warning("⚠️ **Umbral muy bajo:** Considera aumentar el umbral principal")
+                        elif percentage_above_window < 5:
+                            st.warning("⚠️ **Umbral muy alto:** Considera reducir el umbral principal")
+                        elif 10 <= percentage_above_window <= 30:
+                            st.success("✅ **Configuración óptima:** El umbral parece adecuado")
+                        
+                        # Recomendaciones dinámicas
+                        if potential_onsets_window == 0:
+                            st.info("💡 **Sugerencia:** Reduce el umbral o verifica los parámetros temporales")
+                        elif potential_onsets_window > 10:
+                            st.info("💡 **Sugerencia:** Considera aumentar la duración mínima del burst")
+                    
+
             except Exception as e:
-                st.error(f"Error al crear la visualización: {str(e)}")
-        
+                st.error(f"Error al procesar las señales: {str(e)}")
+                st.error("Verifica que los índices de canal sean correctos y que el archivo contenga datos numéricos.")
         # Botones de configuración preestablecida
         st.subheader("🎛️ Configuraciones Preestablecidas")
         
@@ -868,6 +1048,26 @@ if uploaded_file is not None:
                         st.metric("Mejor Detección", f"{np.max(quality_df['quality_score']):.2f}")
                     with col3:
                         st.metric("Peor Detección", f"{np.min(quality_df['quality_score']):.2f}")
+                # Crear DataFrame con serie de tiempo
+                timeseries_df = create_emg_timeseries_with_markers(
+                    emg, markers, srate, 
+                    include_filtered=True, 
+                    include_scaled=True
+                )          
+                
+            
+                
+                # Estadísticas de la serie exportada
+                col1_stats, col2_stats, col3_stats = st.columns(3)
+                with col1_stats:
+                    st.metric("Total Muestras", f"{len(timeseries_df):,}")
+                with col2_stats:
+                    st.metric("Duración", f"{timeseries_df['Tiempo_s'].max():.2f}s")
+                with col3_stats:
+                    st.metric("Marcadores Incluidos", f"{timeseries_df['Marcadores'].sum()}")
+                
+                # Guardar en session_state para descarga
+                st.session_state.timeseries_export = timeseries_df
 
             # Gráfico con marcadores (versión mejorada)
             fig_markers = go.Figure()
@@ -984,12 +1184,141 @@ if uploaded_file is not None:
                     label="📥 Descargar Marcadores (CSV)",
                     data=csv,
                     file_name=f"marcadores_{uploaded_file.name.split('.')[0]}.csv",
-                    mime="text/csv"
+                    mime="text/csv",
+                    key = "dwbt2"
                 )
+                st.subheader("📥 Opciones de Exportación")
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    st.write("**📋 Exportar Tabla de Marcadores**")
+                    csv_markers = marker_df.to_csv(index=False)
+                    st.download_button(
+                        label="📥 Descargar Marcadores (CSV)",
+                        data=csv_markers,
+                        file_name=f"marcadores_{uploaded_file.name.split('.')[0]}.csv",
+                        mime="text/csv",
+                        key = "dwnbt3"
+                    )
+
+                with col2:
+                    st.write("**📈 Exportar Serie de Tiempo Completa**")
+                    
+                    # Opciones de exportación para serie de tiempo
+                    with st.expander("⚙️ Configurar Exportación de Serie de Tiempo"):
+                        export_raw = st.checkbox("Incluir señal cruda (sin filtrar)", value=False)
+                        export_scaled = st.checkbox("Incluir señal escalada/normalizada", value=True)
+                        
+                        # Opción de submuestreo para archivos grandes
+                        downsample_factor = st.selectbox(
+                            "Factor de submuestreo (para reducir tamaño de archivo)",
+                            options=[1, 2, 5, 10, 20],
+                            index=0,
+                            format_func=lambda x: f"Sin submuestreo" if x == 1 else f"1 de cada {x} muestras"
+                        )
+                        
+                        # Mostrar información sobre el tamaño estimado del archivo
+                        estimated_rows = len(emg) // downsample_factor
+                        estimated_size_mb = estimated_rows * 6 * 8 / (1024 * 1024)  # 6 columnas, 8 bytes por float aprox
+                        st.caption(f"📊 Filas estimadas: {estimated_rows:,} | Tamaño estimado: {estimated_size_mb:.1f} MB")
+                    
+                    
+                            
+
+                # Botón de descarga para serie de tiempo (aparece solo si se ha generado)
+                if 'timeseries_export' in st.session_state:
+                    timeseries_csv = st.session_state.timeseries_export.to_csv(index=False)
+                    
+                    st.download_button(
+                        label="📥 Descargar Serie de Tiempo EMG (CSV)",
+                        data=timeseries_csv,
+                        file_name=f"serie_tiempo_emg_{uploaded_file.name.split('.')[0]}.csv",
+                        mime="text/csv",
+                        help="Descarga la serie de tiempo completa con marcadores incluidos", 
+                        key = "dwnbt4"
+                    )
+                    
+                    # Información adicional sobre el archivo
+                    st.success(f"""
+                    ✅ **Serie de tiempo lista para descarga:**
+                    - 🕐 Duración: {st.session_state.timeseries_export['Tiempo_s'].max():.2f} segundos
+                    - 📊 Muestras: {len(st.session_state.timeseries_export):,}
+                    - 🎯 Marcadores: {st.session_state.timeseries_export['Marcadores'].sum()}
+                    - 📋 Columnas: {', '.join(st.session_state.timeseries_export.columns)}
+                    """)
+
+                # Opción adicional: Exportar solo segmentos alrededor de marcadores
+                if len(markers) > 0:
+                    st.write("**✂️ Exportar Segmentos de Marcadores**")
+                    
+                    with st.expander("⚙️ Configurar Exportación de Segmentos"):
+                        segment_duration = st.slider(
+                            "Duración del segmento alrededor de cada marcador (segundos)",
+                            min_value=0.1, max_value=5.0, value=1.0, step=0.1
+                        )
+                        
+                        segment_before = st.slider(
+                            "Tiempo antes del marcador (%)",
+                            min_value=10, max_value=90, value=50, step=5
+                        ) / 100
+                        
+                        if st.button("📋 Generar Segmentos de Marcadores", key = "markers-segments"):
+                            segments_data = []
+                            
+                            segment_samples = int(segment_duration * srate)
+                            before_samples = int(segment_samples * segment_before)
+                            after_samples = segment_samples - before_samples
+                            
+                            for i, marker in enumerate(markers):
+                                start_idx = max(0, marker - before_samples)
+                                end_idx = min(len(emg), marker + after_samples)
+                                
+                                if end_idx > start_idx:
+                                    segment_time = np.arange(start_idx, end_idx) / srate
+                                    segment_emg = emg[start_idx:end_idx]
+                                    
+                                    # Tiempo relativo al marcador
+                                    relative_time = segment_time - (marker / srate)
+                                    
+                                    segment_df = pd.DataFrame({
+                                        'Marcador_ID': i + 1,
+                                        'Tiempo_Absoluto_s': segment_time,
+                                        'Tiempo_Relativo_s': relative_time,
+                                        'EMG_Filtrado': segment_emg,
+                                        'Es_Marcador': (np.arange(start_idx, end_idx) == marker).astype(int)
+                                    })
+                                    
+                                    if export_scaled:
+                                        segment_rect = np.abs(segment_emg)
+                                        if np.max(segment_rect) - np.min(segment_rect) > 0:
+                                            segment_scaled = (segment_rect - np.min(segment_rect)) / (np.max(segment_rect) - np.min(segment_rect))
+                                        else:
+                                            segment_scaled = segment_rect
+                                        segment_df['EMG_Escalado'] = segment_scaled
+                                    
+                                    segments_data.append(segment_df)
+                            
+                            if segments_data:
+                                all_segments_df = pd.concat(segments_data, ignore_index=True)
+                                
+                                st.write(f"**📊 Vista Previa - Segmentos de {len(markers)} Marcadores:**")
+                                st.dataframe(all_segments_df.head(20))
+                                
+                                segments_csv = all_segments_df.to_csv(index=False)
+                                st.download_button(
+                                    label="📥 Descargar Segmentos de Marcadores (CSV)",
+                                    data=segments_csv,
+                                    file_name=f"segmentos_marcadores_{uploaded_file.name.split('.')[0]}.csv",
+                                    mime="text/csv", 
+                                    key = "dwb1"
+                                )
 
     except Exception as e:
         st.error(f"Error al procesar las señales: {str(e)}")
-        st.error("Verifica que los índices de canal sean correctos y que el archivo contenga datos numéricos.")
+        st.error("Verifica que los índices de canal sean correctos y que el archivo contenga datos numéricos.")    
+
+
 
 else:
     # Página de inicio cuando no hay archivo cargado

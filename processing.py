@@ -203,7 +203,7 @@ def detect_markers(emg, srate, threshold, time_after, time_before, after_a, befo
     --------
     array : Índices de los marcadores detectados
     """
-
+    # Rectificar
     emg_rect = np.abs(emg)
     # Normalizar señal EMG entre 0 y 1
     emg_scaled = (emg_rect - np.min(emg_rect)) / (np.max(emg_rect) - np.min(emg_rect))
@@ -459,3 +459,67 @@ def interpolate_artifacts(data, artifact_indices, method='linear'):
         clean_data[artifact_indices] = np.interp(artifact_indices, good_indices, data[good_indices])
 
     return clean_data
+
+def create_emg_timeseries_with_markers(emg_signal, markers, srate, include_filtered=True, include_scaled=True):
+    """
+    Crea un DataFrame con la serie de tiempo completa del EMG incluyendo las marcas
+    
+    Parameters:
+    - emg_signal: señal EMG procesada
+    - markers: array con los índices de los marcadores
+    - srate: frecuencia de muestreo
+    - include_filtered: incluir señal filtrada
+    - include_scaled: incluir señal escalada/normalizada
+    
+    Returns:
+    - DataFrame con columnas: Tiempo, EMG_Crudo, EMG_Filtrado, EMG_Escalado, Marcadores
+    """
+    
+    # Vector de tiempo
+    time_vector = np.arange(len(emg_signal)) / srate
+    
+    # Crear array de marcadores binario (0 o 1)
+    marker_binary = np.zeros(len(emg_signal), dtype=int)
+    
+    # Marcar las posiciones donde hay marcadores
+    valid_markers = markers[markers < len(emg_signal)]  # Asegurar que los marcadores estén en rango
+    marker_binary[valid_markers] = 1
+    
+    # Crear DataFrame base
+    timeseries_df = pd.DataFrame({
+        'Tiempo_s': time_vector,
+        'EMG_Filtrado': emg_signal,
+        'Marcadores': marker_binary
+    })
+    
+    # Agregar señal escalada si se solicita
+    if include_scaled:
+        emg_rect = np.abs(emg_signal)
+        if np.max(emg_rect) - np.min(emg_rect) > 0:
+            emg_scaled = (emg_rect - np.min(emg_rect)) / (np.max(emg_rect) - np.min(emg_rect))
+        else:
+            emg_scaled = emg_rect
+        
+        timeseries_df['EMG_Escalado'] = emg_scaled
+    
+    # Agregar información adicional de contexto de marcadores
+    # Crear columnas que indican proximidad a marcadores
+    marker_context = np.zeros(len(emg_signal), dtype=int)
+    
+    for marker in valid_markers:
+        # Marcar región alrededor del marcador (±50 muestras como ejemplo)
+        context_window = min(50, int(0.05 * srate))  # 50ms de contexto
+        start_idx = max(0, marker - context_window)
+        end_idx = min(len(emg_signal), marker + context_window + 1)
+        marker_context[start_idx:end_idx] = 1
+    
+    timeseries_df['Contexto_Marcador'] = marker_context
+    
+    # Agregar columna con número de marcador (0 si no hay marcador, N si es el marcador N)
+    marker_numbers = np.zeros(len(emg_signal), dtype=int)
+    for i, marker in enumerate(valid_markers):
+        marker_numbers[marker] = i + 1
+    
+    timeseries_df['Numero_Marcador'] = marker_numbers
+    
+    return timeseries_df
