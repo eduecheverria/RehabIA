@@ -138,6 +138,31 @@ def calculate_features(data, srate):
 
     return features
 
+def create_emg_timeseries_with_markers(emg_filtered, markers, srate, include_filtered=True, include_scaled=True):
+    # Lógica para crear un dataframe con la serie de tiempo y los marcadores
+    ttime = np.arange(0, len(emg_filtered) / srate, 1 / srate)[:len(emg_filtered)]
+
+    df_export = pd.DataFrame({'Tiempo_s': ttime})
+
+    if include_filtered:
+        df_export['EMG_Filtrado'] = emg_filtered
+
+    if include_scaled:
+        emg_rect = np.abs(emg_filtered)
+        max_val = np.max(emg_rect)
+        min_val = np.min(emg_rect)
+        if max_val - min_val > 0:
+            emg_scaled = (emg_rect - min_val) / (max_val - min_val)
+        else:
+            emg_scaled = emg_rect
+        df_export['EMG_Escalado'] = emg_scaled
+
+    markers_binary = np.zeros(len(emg_filtered), dtype=int)
+    markers_binary[markers] = 1
+    df_export['Marcadores'] = markers_binary
+
+    return df_export
+
 def spectral_analysis(data, srate, nperseg=None):
     """
     Realiza análisis espectral completo de la señal
