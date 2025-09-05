@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import streamlit as st
 from scipy import signal
 from scipy.stats import kurtosis, skew
 import warnings
@@ -137,31 +138,6 @@ def calculate_features(data, srate):
                 features[f'{band_name}_relative'] = features[f'{band_name}_power'] / features['total_power']
 
     return features
-
-def create_emg_timeseries_with_markers(emg_filtered, markers, srate, include_filtered=True, include_scaled=True):
-    # Lógica para crear un dataframe con la serie de tiempo y los marcadores
-    ttime = np.arange(0, len(emg_filtered) / srate, 1 / srate)[:len(emg_filtered)]
-
-    df_export = pd.DataFrame({'Tiempo_s': ttime})
-
-    if include_filtered:
-        df_export['EMG_Filtrado'] = emg_filtered
-
-    if include_scaled:
-        emg_rect = np.abs(emg_filtered)
-        max_val = np.max(emg_rect)
-        min_val = np.min(emg_rect)
-        if max_val - min_val > 0:
-            emg_scaled = (emg_rect - min_val) / (max_val - min_val)
-        else:
-            emg_scaled = emg_rect
-        df_export['EMG_Escalado'] = emg_scaled
-
-    markers_binary = np.zeros(len(emg_filtered), dtype=int)
-    markers_binary[markers] = 1
-    df_export['Marcadores'] = markers_binary
-
-    return df_export
 
 def spectral_analysis(data, srate, nperseg=None):
     """
@@ -548,3 +524,117 @@ def create_emg_timeseries_with_markers(emg_signal, markers, srate, include_filte
     timeseries_df['Numero_Marcador'] = marker_numbers
     
     return timeseries_df
+
+def create_synced_controls(param_name, display_name, min_val, max_val, step, format_str="%.3f", help_text=""):
+                col_slider, col_input = st.columns([2, 1])
+                
+                with col_slider:
+                    slider_val = st.slider(
+                        f"{display_name} (Slider)",
+                        min_value=min_val,
+                        max_value=max_val,
+                        value=st.session_state[f'{param_name}_value'],
+                        step=step,
+                        key=f"{param_name}_slider",
+                        help=help_text
+                    )
+                
+                with col_input:
+                    input_val = st.number_input(
+                        "Entrada directa",
+                        min_value=min_val,
+                        max_value=max_val,
+                        value=st.session_state[f'{param_name}_value'],
+                        step=step,
+                        format=format_str,
+                        key=f"{param_name}_input"
+                    )
+                
+                # Sincronización
+                if st.session_state[f'{param_name}_slider'] != st.session_state[f'{param_name}_value']:
+                    st.session_state[f'{param_name}_value'] = st.session_state[f'{param_name}_slider']
+                    st.rerun()
+                elif st.session_state[f'{param_name}_input'] != st.session_state[f'{param_name}_value']:
+                    st.session_state[f'{param_name}_value'] = st.session_state[f'{param_name}_input']
+                    st.rerun()
+                
+                return st.session_state[f'{param_name}_value']
+
+# processing.py
+
+def segment_data(eeg, emg, markers, window, onset, srate):
+    """
+    Segmenta EEG y EMG alrededor de marcadores.
+    
+    Parameters:
+    -----------
+    eeg, emg : array
+        Señales EEG y EMG
+    markers : array
+        Índices de los marcadores detectados
+    window : float
+        Duración de la ventana en segundos
+    onset : float
+        Tiempo (en segundos) que define la posición del "0" dentro de la ventana
+    srate : float
+        Frecuencia de muestreo
+
+    Returns:
+    --------
+    eeg_epochs, emg_epochs : arrays (n_trials x samples)
+    """
+    win_samples = int(window * srate)
+    onset_samples = int(onset * srate)
+    
+    eeg_epochs = []
+    emg_epochs = []
+
+    for m in markers:
+        beg = m - onset_samples
+        end = beg + win_samples
+        if beg >= 0 and end <= len(eeg):
+            eeg_epochs.append(eeg[beg:end])
+            emg_epochs.append(emg[beg:end])
+
+    if len(eeg_epochs) == 0:
+        return np.array([]), np.array([])
+
+    return np.array(eeg_epochs), np.array(emg_epochs)
+
+
+def epoch_and_average(eeg_epochs, emg_epochs, srate, baseline=0.1):
+    """
+    Aplica baseline correction al EEG y calcula promedios.
+    - EEG: se resta la media de los primeros baseline segundos
+    - EMG: se promedia sin baseline correction
+    """
+    if eeg_epochs.size == 0 or emg_epochs.size == 0:
+        return None, None
+
+    eeg_corrected = eeg_epochs.copy()
+    baseline_samples = int(baseline * srate)
+
+    for i in range(len(eeg_corrected)):
+        d1 = np.mean(eeg_corrected[i, :baseline_samples])
+        eeg_corrected[i] -= d1
+
+    eeg_avg = np.mean(eeg_corrected, axis=0)
+    emg_avg = np.mean(emg_epochs, axis=0)
+
+    return eeg_avg, emg_avg
+
+
+def reorder_and_split(eeg_epochs, n_groups=2):
+    """
+    Reordena aleatoriamente los trials de EEG y calcula promedios en grupos.
+    """
+    if eeg_epochs is None or eeg_epochs.size == 0:
+        return None
+
+    n_trials = eeg_epochs.shape[0]
+    shuffled = eeg_epochs[np.random.permutation(n_trials)]
+
+    groups = np.array_split(shuffled, n_groups)
+    averages = [np.mean(g, axis=0) for g in groups if len(g) > 0]
+
+    return averages
