@@ -1,0 +1,24 @@
+la deteccion del BP no es algo que esta funcionando muyu bien
+en BacAv, al haber tantos parametros es dificil estandarizar la deteccion
+a nivel clinico: necesitamos algo que busque los marcadores electromiograficos
+clasificacion de potenciales esta ligado mas hacia la investigacion
+
+EMG es una buena alternativa y mas simple 
+necesitamos tener las etiquetas para saber que marcador es correcto
+**podemos partir con un cluster para ver como se agrupan los spikes, lo mostramos a felipe y lo analizamos en conjunto ,tratando de marcar cuales serian burst correctos
+se podria hacer un analisis de componenetes independientes (pca) -- clusterizacion 
+al ver un movimiento cerca de la region toracica, se mete muy fuerte la contraccion cardiaca que genera mucho ruido (lo bueno es que esto es ciclico y se puede desacoplar)
+se pone el marcador, luego con estos se corta el EEG y se hace el analisis: se pueden mirar el BP (onda lenta) y tambien se puede observar una onda que precede el movimiento asociado a un cambio en el espectrograma (frecuencias) -- en la banda Beta (13-30 hz) se observa un ruido que esta en reposo en cierta corteza, al preparar el movimiento la intensidad de esta banda cae y ocurre una desincronizacion, que permite identificar que se va a hacer un movimiento voluntarios
+en parkinson el beta está aumentado, se esta buscando que los aparatos detecten el beta y cierren el lazo
+
+UX/UI
+¿que es lo que queremos hacer con esto? puede salir una publicacion
+si va a ser mas clinico, el paquete va a ser mas cerrado, pensando en el tiempo acotado para ver al paciente y para entregar el resultado
+frente a una duda de investigacion, hay mas tiempo para jugar con los datos
+tremoroton (otra app de felipe) se usa
+BacAv tiene limitaciones: hay que transformar archivo txt, orden de columnas, esta en host gratuito que limita la cantidad de datos, es relativamente rigido, la busqueda de 'rayita' no fluye bien asi que hay harta instancia de mejora
+
+Placas electronicas
+
+
+juntarse cada 2 semanas (frente a dudas +56956196093)

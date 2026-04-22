@@ -1,0 +1,15 @@
+# Windows metadata
+*_Zone.Identifier
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Streamlit cache
+.streamlit/
+
+# Virtual environments
+.venv/
+venv/
+env/
