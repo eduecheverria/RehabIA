@@ -1,0 +1,18 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "agent",
+            "if": "Bash(mkdir*)",
+            "statusMessage": "Documentando nueva carpeta...",
+            "timeout": 120,
+            "prompt": "Se ejecutó un comando Bash con mkdir. El JSON de contexto es: $ARGUMENTS\n\n1. Lee tool_input.command y extrae todos los directorios creados (puede haber varios si el comando es 'mkdir -p A B' o 'mkdir -p A && mkdir B').\n2. Solo actúa si tool_response indica éxito (exit code 0 o sin error).\n3. Para cada directorio nuevo:\n   a. Verifica si ya tiene README.md dentro. Si lo tiene, no hagas nada.\n   b. Si no tiene README.md, léelo siguiendo la lógica de /docfolder: lista los archivos, lee su contenido, escribe un README.md en español con: título y propósito de la carpeta, tabla de contenidos con descripción por archivo (funciones principales si es .py, secciones si es .ipynb, formato si es dato), cómo usarlo con comandos concretos, y dependencias con otros módulos del proyecto.\n4. Si el directorio está vacío o recién creado sin archivos, crea un README.md mínimo con el título y una línea de propósito inferida del nombre y contexto del proyecto."
+          }
+        ]
+      }
+    ]
+  }
+}
