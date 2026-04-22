@@ -24,6 +24,8 @@ STATE: dict = {
     "markers": None,
     "marker_times": None,
     "emg_channel": None,
+    "eeg_epochs_corrected": None,
+    "segment_t": None,
 }
 
 
@@ -65,6 +67,11 @@ class SegmentRequest(BaseModel):
     window: float = 2.0
     onset: float = 1.0
     baseline: float = 0.1
+
+
+class ReorderRequest(BaseModel):
+    n_groups: int = 2
+    seed: Optional[int] = None
 
 
 def _parse_file(name: str, content: bytes) -> pd.DataFrame:
@@ -113,6 +120,8 @@ async def upload(file: UploadFile = File(...)):
     STATE["markers"] = None
     STATE["marker_times"] = None
     STATE["emg_channel"] = None
+    STATE["eeg_epochs_corrected"] = None
+    STATE["segment_t"] = None
 
     duration = float(df["Tiempo_s"].iloc[-1] - df["Tiempo_s"].iloc[0])
 
@@ -178,6 +187,8 @@ def analyze(req: AnalyzeRequest):
     STATE["eeg_filtered"] = eeg_filtered
     STATE["markers"] = markers
     STATE["emg_channel"] = req.emg_channel
+    STATE["eeg_epochs_corrected"] = None
+    STATE["segment_t"] = None
 
     time_full = df["Tiempo_s"].values
     marker_times = time_full[markers].tolist() if len(markers) else []
@@ -217,16 +228,47 @@ def segment(req: SegmentRequest):
     if eeg_epochs.size == 0:
         raise HTTPException(status_code=400, detail="No hay épocas válidas (ventana excede los bordes).")
 
-    eeg_avg, emg_avg = processing.epoch_and_average(eeg_epochs, emg_epochs, srate, baseline=req.baseline)
+    eeg_avg, emg_avg, eeg_corrected = processing.epoch_and_average(
+        eeg_epochs, emg_epochs, srate, baseline=req.baseline
+    )
 
     win_samples = eeg_epochs.shape[1]
     t = (np.arange(win_samples) / srate) - req.onset
+
+    STATE["eeg_epochs_corrected"] = eeg_corrected
+    STATE["segment_t"] = t
 
     return {
         "t": t.tolist(),
         "eeg_avg": eeg_avg.tolist(),
         "emg_avg": emg_avg.tolist(),
         "n_trials": int(eeg_epochs.shape[0]),
+    }
+
+
+@app.post("/api/reorder_split")
+def reorder_split(req: ReorderRequest):
+    epochs = STATE["eeg_epochs_corrected"]
+    t = STATE["segment_t"]
+    if epochs is None or t is None:
+        raise HTTPException(status_code=400, detail="Primero corré /api/segment.")
+
+    if req.n_groups < 2:
+        raise HTTPException(status_code=400, detail="n_groups debe ser >= 2.")
+
+    rng = np.random.default_rng(req.seed) if req.seed is not None else np.random.default_rng()
+    groups = processing.reorder_and_split(epochs, n_groups=req.n_groups, rng=rng)
+
+    if not groups:
+        raise HTTPException(status_code=400, detail="No hay épocas para partir.")
+
+    return {
+        "t": t.tolist(),
+        "n_total_trials": int(epochs.shape[0]),
+        "groups": [
+            {"n_trials": int(n), "avg": avg.tolist()}
+            for avg, n in groups
+        ],
     }
 
 

@@ -101,6 +101,7 @@ async function runAnalyze() {
 
   plotEmg(data);
 
+  $("reorder-section").hidden = true;
   if (data.n_markers > 0) {
     $("segment-section").hidden = false;
   }
@@ -168,6 +169,7 @@ async function runSegment() {
   const data = await res.json();
   setInfo($("segment-info"), `ERP promediado sobre ${data.n_trials} trials`, "ok");
   plotErp(data);
+  $("reorder-section").hidden = false;
 }
 
 function plotErp(data) {
@@ -198,6 +200,53 @@ function plotErp(data) {
   }, PLOT_CONFIG);
 }
 
+async function runReorder() {
+  const body = { n_groups: parseInt($("r-n-groups").value, 10) };
+
+  setInfo($("reorder-info"), "Procesando...");
+  const res = await fetch("/api/reorder_split", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    setInfo($("reorder-info"), "Error: " + err.detail, "err");
+    return;
+  }
+
+  const data = await res.json();
+  const sizes = data.groups.map((g) => g.n_trials).join(" / ");
+  setInfo(
+    $("reorder-info"),
+    `${data.n_total_trials} trials → ${data.groups.length} grupos (${sizes})`,
+    "ok"
+  );
+  plotReorder(data);
+}
+
+const GROUP_COLORS = ["#4f8cff", "#5cd98c", "#ffb84d", "#ff5d5d", "#b88dff", "#5cd9d9"];
+
+function plotReorder(data) {
+  const traces = data.groups.map((g, i) => ({
+    x: data.t,
+    y: g.avg,
+    type: "scatter",
+    mode: "lines",
+    name: `Grupo ${i + 1} (n=${g.n_trials})`,
+    line: { color: GROUP_COLORS[i % GROUP_COLORS.length], width: 1.8 },
+  }));
+
+  Plotly.newPlot("reorder-plot", traces, {
+    ...PLOT_LAYOUT,
+    title: { text: "EEG promedio por grupo (reorden aleatorio)", font: { size: 13 } },
+    xaxis: { title: "Tiempo relativo al marcador (s)", zeroline: true, zerolinecolor: "#5cd98c" },
+    yaxis: { title: "EEG (µV)" },
+    legend: { x: 0, y: 1.1, orientation: "h" },
+  }, PLOT_CONFIG);
+}
+
 function downloadMarkers() {
   window.location.href = "/api/export/markers";
 }
@@ -206,3 +255,4 @@ $("upload-btn").addEventListener("click", uploadFile);
 $("analyze-btn").addEventListener("click", runAnalyze);
 $("segment-btn").addEventListener("click", runSegment);
 $("export-btn").addEventListener("click", downloadMarkers);
+$("reorder-btn").addEventListener("click", runReorder);

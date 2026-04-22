@@ -81,6 +81,23 @@
 
       <div id="erp-plot" class="plot"></div>
     </section>
+
+    <!-- 4. Reorder & split -->
+    <section class="card" id="reorder-section" hidden>
+      <h2>4. Reorder &amp; split</h2>
+      <p class="info">
+        Reordena los trials al azar, los parte en grupos y grafica el promedio de cada grupo.
+        Si la forma se mantiene entre grupos, el ERP es consistente.
+      </p>
+      <div class="grid">
+        <label>Nº de grupos<input type="number" id="r-n-groups" value="2" min="2" max="6" step="1" /></label>
+      </div>
+      <div class="row">
+        <button id="reorder-btn">Reordenar y partir</button>
+        <span id="reorder-info" class="info"></span>
+      </div>
+      <div id="reorder-plot" class="plot"></div>
+    </section>
   </main>
 
   <script src="/static/app.js"></script>

@@ -83,11 +83,22 @@ def segment_data(eeg, emg, markers, window, onset, srate):
 
 def epoch_and_average(eeg_epochs, emg_epochs, srate, baseline=0.1):
     if eeg_epochs.size == 0 or emg_epochs.size == 0:
-        return None, None
+        return None, None, None
 
     baseline_samples = int(baseline * srate)
     eeg_corrected = eeg_epochs.copy()
     for i in range(len(eeg_corrected)):
         eeg_corrected[i] -= np.mean(eeg_corrected[i, :baseline_samples])
 
-    return np.mean(eeg_corrected, axis=0), np.mean(emg_epochs, axis=0)
+    return np.mean(eeg_corrected, axis=0), np.mean(emg_epochs, axis=0), eeg_corrected
+
+
+def reorder_and_split(eeg_epochs, n_groups=2, rng=None):
+    if eeg_epochs is None or eeg_epochs.size == 0:
+        return []
+
+    rng = rng if rng is not None else np.random.default_rng()
+    n_trials = eeg_epochs.shape[0]
+    shuffled = eeg_epochs[rng.permutation(n_trials)]
+    groups = np.array_split(shuffled, n_groups)
+    return [(np.mean(g, axis=0), len(g)) for g in groups if len(g) > 0]
