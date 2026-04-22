@@ -1,4 +1,8 @@
-Lee todos los archivos de la carpeta que se pasa como argumento (o la carpeta actual si no hay argumento) y genera o actualiza un `README.md` dentro de esa carpeta.
+Genera o actualiza un `README.md` dentro de la carpeta indicada como argumento (o la carpeta actual si no hay argumento).
+
+TRIGGER: Ejecuta esta skill cada vez que se cree una carpeta nueva en el proyecto — ya sea por mkdir, por Write creando un archivo en un directorio nuevo, o por cualquier otra operación que resulte en un directorio recién creado. Si la carpeta ya tiene README.md, actualízalo solo si su contenido cambió.
+
+DO NOT TRIGGER: si la carpeta es `__pycache__`, `.git`, `node_modules`, `.venv`, o cualquier directorio de sistema/caché.
 
 ## Pasos que debes seguir
 
@@ -43,4 +47,5 @@ Para datos: describir columnas/formato.
 - No copies docstrings literalmente: sintetiza en lenguaje propio.
 - No inventes comportamiento: si no puedes leer un archivo, dilo explícitamente.
 - Si ya existe un `README.md`, actualiza solo las secciones que cambiaron; no borres información válida.
+- Si la carpeta está vacía o recién creada, genera un README.md mínimo con título y propósito inferido del nombre y contexto del proyecto.
 - Guarda el resultado como `README.md` dentro de la carpeta documentada.
