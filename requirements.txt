@@ -1,6 +1,11 @@
 # Aplicación principal
 streamlit>=1.28.0
 
+# Web app alternativa (webapp/)
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.9
+
 # Procesamiento de datos
 pandas>=2.0.0
 numpy>=1.24.0

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>RehabIA — Análisis EEG/EMG</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>RehabIA</h1>
+    <span class="subtitle">EEG/EMG — detección de bursts y ERP</span>
+  </header>
+
+  <main>
+    <!-- 1. Upload -->
+    <section class="card">
+      <h2>1. Cargar archivo</h2>
+      <div class="row">
+        <input type="file" id="file-input" accept=".txt,.csv" />
+        <button id="upload-btn">Cargar</button>
+      </div>
+      <div id="upload-info" class="info"></div>
+    </section>
+
+    <!-- 2. Filters + burst detection -->
+    <section class="card" id="analyze-section" hidden>
+      <h2>2. Filtros y detección de bursts</h2>
+
+      <details open>
+        <summary>Filtros</summary>
+        <div class="grid">
+          <label>Highpass (Hz)<input type="number" id="f-hp" value="1" step="0.1" /></label>
+          <label>Lowpass (Hz)<input type="number" id="f-lp" value="100" step="1" /></label>
+          <label>Notch (Hz)<input type="number" id="f-notch" value="50" step="1" /></label>
+        </div>
+      </details>
+
+      <details open>
+        <summary>Canales</summary>
+        <div class="grid">
+          <label>EMG<select id="emg-channel"></select></label>
+          <label>EEG (para ERP)<select id="eeg-channel"></select></label>
+        </div>
+      </details>
+
+      <details open>
+        <summary>Parámetros de burst</summary>
+        <div class="grid">
+          <label>Umbral<input type="number" id="b-threshold" value="0.2" step="0.01" min="0" max="1" /></label>
+          <label>Duración mín. (s)<input type="number" id="b-duration" value="0.4" step="0.05" /></label>
+          <label>Tiempo antes (s)<input type="number" id="b-time-before" value="0.02" step="0.01" /></label>
+          <label>Tiempo después (s)<input type="number" id="b-time-after" value="0.02" step="0.01" /></label>
+          <label>Amplitud antes (máx)<input type="number" id="b-before-a" value="0.20" step="0.01" /></label>
+          <label>Amplitud después (mín)<input type="number" id="b-after-a" value="0.15" step="0.01" /></label>
+        </div>
+      </details>
+
+      <div class="row">
+        <button id="analyze-btn">Analizar</button>
+        <button id="export-btn" disabled>Exportar marcadores CSV</button>
+        <span id="markers-info" class="info"></span>
+      </div>
+
+      <div id="emg-plot" class="plot"></div>
+    </section>
+
+    <!-- 3. ERP -->
+    <section class="card" id="segment-section" hidden>
+      <h2>3. Segmentación y ERP</h2>
+      <div class="grid">
+        <label>Ventana (s)<input type="number" id="s-window" value="2.0" step="0.1" /></label>
+        <label>Onset (s)<input type="number" id="s-onset" value="1.0" step="0.1" /></label>
+        <label>Baseline (s)<input type="number" id="s-baseline" value="0.1" step="0.05" /></label>
+      </div>
+
+      <div class="row">
+        <button id="segment-btn">Segmentar</button>
+        <span id="segment-info" class="info"></span>
+      </div>
+
+      <div id="erp-plot" class="plot"></div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
