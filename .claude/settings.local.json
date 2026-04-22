@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/rafae/**)",
+      "Read(///wsl.localhost/Ubuntu//**)",
+      "Bash(grep -E \"\\\\.\\(py|ipynb|txt|csv|md|json|toml|yaml\\)$\")",
+      "Read(///wsl.localhost/Ubuntu/home/rafae/RehabIA/**)",
+      "Read(///wsl.localhost/Ubuntu/home/rafae/RehabIA/.claude/**)",
+      "Read(///wsl.localhost/Ubuntu/home/rafae/RehabIA/skills/**)",
+      "Bash(wsl -d Ubuntu -- bash -c \"mkdir -p ~/RehabIA/.claude/skills/generate-docs ~/RehabIA/.claude/skills/commit ~/RehabIA/.claude/skills/review-dsp && echo done\")",
+      "Bash(wsl -d Ubuntu -- bash -c \"ls -la ~/RehabIA/.claude/\")",
+      "Bash(wsl -d Ubuntu -- bash -c \"sudo mkdir -p ~/RehabIA/.claude/skills/generate-docs ~/RehabIA/.claude/skills/commit ~/RehabIA/.claude/skills/review-dsp && sudo chown -R rafae:rafae ~/RehabIA/.claude/skills && echo done\")",
+      "Bash(wsl -d Ubuntu -- sudo mkdir -p /home/rafae/RehabIA/.claude/skills/generate-docs /home/rafae/RehabIA/.claude/skills/commit /home/rafae/RehabIA/.claude/skills/review-dsp)",
+      "Bash(wsl -d Ubuntu -- sudo chown -R rafae:rafae /home/rafae/RehabIA/.claude/skills)"
+    ]
+  }
+}
