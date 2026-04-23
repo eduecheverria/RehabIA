@@ -1,21 +1,18 @@
 """
 Convierte Data.txt a CSV con nombres de columnas intuitivos.
 
-Estructura del archivo (9 columnas, separadas por espacios):
-  Col 0 : Tiempo (s)      — vector de tiempo, incrementos de 0.001 s → 1000 Hz
-  Col 1 : EEG_1           — canal EEG frontal/central (amplitud ~1–2 µV)
-  Col 2 : EEG_2           — segundo canal EEG
-  Col 3 : EMG_1           — canal EMG muscular (amplitud ~0.02 µV, menor escala)
+Estructura del archivo bruto (9 columnas, separadas por espacios):
+  Col 0 : Tiempo (s)  — vector de tiempo, 0.001 s de paso → 1000 Hz
+  Col 1 : EEG_1       — canal EEG (amplitud alta en la grabación)
+  Col 2 : EEG_2       — segundo canal EEG
+  Col 3 : EMG_1       — canal EMG muscular
   Col 4 : EMG_2
   Col 5 : EMG_3
   Col 6 : EMG_4
-  Col 7 : EMG_5
-  Col 8 : EMG_6
+  Col 7 : (extra)     — no utilizado
+  Col 8 : (extra)     — no utilizado
 
-Canales clave para el análisis (según app_edu.py):
-  - EEG_1 y EEG_2 → señal cerebral para detectar Bereitschaftspotential (BP)
-  - EMG_1..6      → actividad muscular; se usa uno (o varios) para detectar bursts
-                     y definir marcadores de movimiento
+Solo se exportan las primeras 7 columnas (tiempo + 2 EEG + 4 EMG).
 
 Uso:
   python convert_to_csv.py
@@ -34,8 +31,6 @@ COLUMN_NAMES = [
     "EMG_2",
     "EMG_3",
     "EMG_4",
-    "EMG_5",
-    "EMG_6",
 ]
 
 SRATE = 1000  # Hz
@@ -45,24 +40,14 @@ def convert(input_path: Path, output_path: Path) -> None:
     print(f"Leyendo {input_path} ...")
     df = pd.read_csv(input_path, sep=r"\s+", header=None, engine="python")
 
-    if df.shape[1] != len(COLUMN_NAMES):
-        print(
-            f"Advertencia: el archivo tiene {df.shape[1]} columnas, "
-            f"se esperaban {len(COLUMN_NAMES)}. "
-            "Ajustando nombres automáticamente."
+    n_expected = len(COLUMN_NAMES)
+    if df.shape[1] < n_expected:
+        raise ValueError(
+            f"El archivo tiene {df.shape[1]} columnas; se necesitan al menos {n_expected}."
         )
-        n = df.shape[1]
-        auto_names = ["Tiempo_s"]
-        # primeras 2 columnas no-tiempo son EEG
-        eeg_count = min(2, n - 1)
-        for i in range(1, eeg_count + 1):
-            auto_names.append(f"EEG_{i}")
-        # resto son EMG
-        for i in range(1, n - eeg_count):
-            auto_names.append(f"EMG_{i}")
-        df.columns = auto_names
-    else:
-        df.columns = COLUMN_NAMES
+
+    df = df.iloc[:, :n_expected]
+    df.columns = COLUMN_NAMES
 
     duration_s = df["Tiempo_s"].iloc[-1]
     print(f"  Muestras  : {len(df):,}")
