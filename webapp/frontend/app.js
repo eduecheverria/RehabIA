@@ -1,23 +1,231 @@
+/* =========================================================
+   RehabIA — app.js (clinical, dark mode, patient data)
+   Preserves: IDs, fetch endpoints, callbacks, 4-step order.
+   ========================================================= */
+
 const $ = (id) => document.getElementById(id);
 
-const state = {
-  columns: [],
-  srate: null,
-};
+const state = { columns: [], srate: null };
 
-const PLOT_LAYOUT = {
-  paper_bgcolor: "#171a21",
-  plot_bgcolor: "#0f1319",
-  font: { color: "#e6e8eb", size: 12 },
-  margin: { l: 50, r: 20, t: 30, b: 40 },
-};
+/* ---------- Plot theming (reads CSS vars so dark/light work) ---------- */
 
-const PLOT_CONFIG = { responsive: true, displaylogo: false };
+function plotColors() {
+  const cs = getComputedStyle(document.documentElement);
+  return {
+    bg:     cs.getPropertyValue("--plot-bg").trim() || "#fff",
+    grid:   cs.getPropertyValue("--plot-grid").trim() || "#eef1f0",
+    zero:   cs.getPropertyValue("--plot-zero").trim() || "#cfd5d3",
+    fg:     cs.getPropertyValue("--fg").trim() || "#1b2826",
+    muted:  cs.getPropertyValue("--muted").trim() || "#6a7876",
+    border: cs.getPropertyValue("--border-strong").trim() || "#cfd5d3",
+    surface:cs.getPropertyValue("--surface").trim() || "#fff",
+  };
+}
+
+function plotLayout() {
+  const c = plotColors();
+  return {
+    paper_bgcolor: c.bg,
+    plot_bgcolor: c.bg,
+    font: { color: c.fg, family: "Inter, system-ui, sans-serif", size: 12 },
+    margin: { l: 54, r: 24, t: 36, b: 44 },
+    xaxis: { gridcolor: c.grid, zerolinecolor: c.zero, linecolor: c.zero, tickfont: { size: 11, color: c.muted } },
+    yaxis: { gridcolor: c.grid, zerolinecolor: c.zero, linecolor: c.zero, tickfont: { size: 11, color: c.muted } },
+    hoverlabel: { bgcolor: c.surface, bordercolor: c.border, font: { family: "JetBrains Mono, monospace", size: 11, color: c.fg } },
+  };
+}
+
+const PLOT_CONFIG = { responsive: true, displaylogo: false, modeBarButtonsToRemove: ["lasso2d", "select2d"] };
+
+function themeAccents() {
+  const cs = getComputedStyle(document.documentElement);
+  return {
+    ACCENT: cs.getPropertyValue("--accent").trim() || "#2b8d96",
+    SIGNAL: cs.getPropertyValue("--signal").trim() || "#4fa578",
+    DANGER: cs.getPropertyValue("--danger").trim() || "#c94a4a",
+  };
+}
+
+let GROUP_COLORS = [];
+function refreshGroupColors() {
+  const a = themeAccents();
+  GROUP_COLORS = [a.ACCENT, a.SIGNAL, "#d9a14a", a.DANGER, "#9b7ecf", "#4fb2b8"];
+}
+
+/* ---------- Small helpers ---------- */
 
 function setInfo(el, msg, kind = "") {
-  el.textContent = msg;
+  if (!el) return;
+  el.textContent = msg || "";
   el.className = "info " + kind;
 }
+
+function setStep(n, statusText, stateName) {
+  const step = document.querySelector(`.step[data-step="${n}"]`);
+  const st = $(`st-${n}`);
+  if (!step) return;
+  step.classList.remove("is-active", "is-done", "is-error", "is-locked");
+  if (stateName === "active") step.classList.add("is-active");
+  else if (stateName === "done") step.classList.add("is-done");
+  else if (stateName === "error") step.classList.add("is-error");
+  else if (stateName === "locked") step.classList.add("is-locked");
+  if (st && statusText) st.textContent = statusText;
+}
+
+function unlockCard(id) { const c = $(id); if (c) c.classList.remove("is-locked"); }
+function lockCard(id)   { const c = $(id); if (c) c.classList.add("is-locked"); }
+
+function showError(panelId, detail) {
+  const p = $(panelId);
+  if (!p) return;
+  const body = p.querySelector("[data-err-msg]");
+  if (body) body.textContent = detail || "Error desconocido";
+  p.classList.add("is-visible");
+}
+function clearError(panelId) { const p = $(panelId); if (p) p.classList.remove("is-visible"); }
+
+function setButtonLoading(btn, loading) {
+  if (!btn) return;
+  if (loading) { btn.classList.add("is-loading"); btn.disabled = true; }
+  else { btn.classList.remove("is-loading"); btn.disabled = false; }
+}
+
+function setPlotLoading(plotEl, loading) {
+  const wrap = plotEl.closest(".plot-wrap");
+  if (wrap) wrap.classList.toggle("is-loading", !!loading);
+}
+
+function hideEmpty(id) { const e = $(id); if (e) e.classList.add("hidden"); }
+function showEmpty(id) { const e = $(id); if (e) e.classList.remove("hidden"); }
+
+function formatNumber(n) { try { return n.toLocaleString("es-419"); } catch { return String(n); } }
+
+function setMeta(id, value) {
+  const el = $(id);
+  if (!el) return;
+  el.textContent = value;
+  el.classList.remove("placeholder");
+}
+
+/* ---------- Theme toggle ---------- */
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  try { localStorage.setItem("rehabia.theme", theme); } catch (e) {}
+  $("theme-light")?.classList.toggle("is-on", theme === "light");
+  $("theme-dark")?.classList.toggle("is-on", theme === "dark");
+  refreshGroupColors();
+  // Re-style any already-rendered plots
+  ["emg-plot", "erp-plot", "reorder-plot"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el && el.data && el.data.length) {
+      Plotly.relayout(el, plotLayout());
+    }
+  });
+}
+
+function initTheme() {
+  const saved = (() => { try { return localStorage.getItem("rehabia.theme"); } catch { return null; } })();
+  applyTheme(saved || "light");
+  document.querySelectorAll("[data-theme-set]").forEach(btn => {
+    btn.addEventListener("click", () => applyTheme(btn.dataset.themeSet));
+  });
+}
+
+/* ---------- Patient data (persisted) ---------- */
+
+const PATIENT_KEY = "rehabia.patient";
+const PATIENT_FIELDS = ["name", "id", "date", "session", "dx", "therapist", "notes"];
+
+function loadPatient() {
+  try { return JSON.parse(localStorage.getItem(PATIENT_KEY) || "{}") || {}; }
+  catch { return {}; }
+}
+function savePatient(data) {
+  try { localStorage.setItem(PATIENT_KEY, JSON.stringify(data)); } catch {}
+}
+
+function initials(name) {
+  if (!name) return "??";
+  const parts = name.trim().split(/\s+/).slice(0, 2);
+  return parts.map(p => p[0] || "").join("").toUpperCase() || "??";
+}
+
+function formatDateCo(iso) {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso + "T00:00:00");
+    return d.toLocaleDateString("es-419", { day: "2-digit", month: "short", year: "numeric" });
+  } catch { return iso; }
+}
+
+function renderPatient() {
+  const p = loadPatient();
+  const hasAny = PATIENT_FIELDS.some(k => (p[k] || "").trim());
+
+  const nameEl = $("p-name");
+  if (p.name) { nameEl.textContent = p.name; nameEl.classList.remove("placeholder"); }
+  else { nameEl.textContent = "Sin datos del paciente"; nameEl.classList.add("placeholder"); }
+
+  $("p-avatar").textContent = initials(p.name);
+
+  const idEl = $("p-id");
+  if (p.id) { idEl.textContent = p.id; idEl.hidden = false; } else { idEl.hidden = true; }
+
+  $("p-date").textContent = formatDateCo(p.date);
+  $("p-session").textContent = p.session || "—";
+  $("p-dx").textContent = p.dx || "—";
+  $("p-therapist").textContent = p.therapist || "—";
+
+  const notesWrap = $("p-notes-wrap");
+  if (p.notes && p.notes.trim()) {
+    $("p-notes").textContent = p.notes;
+    notesWrap.hidden = false;
+  } else {
+    notesWrap.hidden = true;
+  }
+
+  // Meta row visibility: show a hint to edit if totally empty
+  $("p-meta").style.display = hasAny ? "" : "none";
+}
+
+function openPatientEdit() {
+  const p = loadPatient();
+  $("p-in-name").value = p.name || "";
+  $("p-in-id").value = p.id || "";
+  $("p-in-date").value = p.date || new Date().toISOString().slice(0, 10);
+  $("p-in-session").value = p.session || "";
+  $("p-in-dx").value = p.dx || "";
+  $("p-in-therapist").value = p.therapist || "";
+  $("p-in-notes").value = p.notes || "";
+  $("patient-view").classList.add("is-editing");
+  setTimeout(() => $("p-in-name").focus(), 50);
+}
+function closePatientEdit() {
+  $("patient-view").classList.remove("is-editing");
+}
+
+function initPatient() {
+  renderPatient();
+  $("patient-edit-btn").addEventListener("click", openPatientEdit);
+  $("patient-cancel-btn").addEventListener("click", closePatientEdit);
+  $("patient-save-btn").addEventListener("click", () => {
+    const data = {
+      name: $("p-in-name").value.trim(),
+      id: $("p-in-id").value.trim(),
+      date: $("p-in-date").value,
+      session: $("p-in-session").value.trim(),
+      dx: $("p-in-dx").value.trim(),
+      therapist: $("p-in-therapist").value.trim(),
+      notes: $("p-in-notes").value.trim(),
+    };
+    savePatient(data);
+    renderPatient();
+    closePatientEdit();
+  });
+}
+
+/* ---------- Channels ---------- */
 
 function populateChannelSelectors(columns) {
   const emg = $("emg-channel");
@@ -30,40 +238,60 @@ function populateChannelSelectors(columns) {
   }
 }
 
+/* ---------- 1. Upload ---------- */
+
 async function uploadFile() {
+  const btn = $("upload-btn");
   const file = $("file-input").files[0];
   if (!file) {
-    setInfo($("upload-info"), "Elegí un archivo primero.", "err");
+    setInfo($("upload-info"), "Debe seleccionar un archivo primero.", "err");
+    setStep(1, "Sin archivo", "error");
     return;
   }
-  setInfo($("upload-info"), "Cargando...");
+
+  setInfo($("upload-info"), "Cargando...", "work");
+  setStep(1, "Cargando…", "active");
+  setButtonLoading(btn, true);
 
   const fd = new FormData();
   fd.append("file", file);
 
-  const res = await fetch("/api/upload", { method: "POST", body: fd });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    setInfo($("upload-info"), "Error: " + err.detail, "err");
-    return;
+  try {
+    const res = await fetch("/api/upload", { method: "POST", body: fd });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || res.statusText);
+    }
+    const data = await res.json();
+    state.columns = data.columns;
+    state.srate = data.srate;
+
+    populateChannelSelectors(data.columns);
+
+    setMeta("m-file", data.filename);
+    setMeta("m-samples", formatNumber(data.n_samples));
+    setMeta("m-duration", `${data.duration.toFixed(1)} s`);
+    setMeta("m-srate", `${data.srate} Hz`);
+
+    setInfo($("upload-info"),
+      `${data.filename} — ${formatNumber(data.n_samples)} muestras · ${data.duration.toFixed(1)}s @ ${data.srate} Hz`, "ok");
+
+    $("analyze-section").hidden = false;
+    unlockCard("card-2");
+    setStep(1, "Listo", "done");
+    setStep(2, "Esperando análisis", "active");
+  } catch (e) {
+    setInfo($("upload-info"), "Error: " + e.message, "err");
+    setStep(1, "Error de carga", "error");
+  } finally {
+    setButtonLoading(btn, false);
   }
-
-  const data = await res.json();
-  state.columns = data.columns;
-  state.srate = data.srate;
-
-  populateChannelSelectors(data.columns);
-
-  setInfo(
-    $("upload-info"),
-    `${data.filename} — ${data.n_samples.toLocaleString()} muestras, ${data.duration.toFixed(1)}s @ ${data.srate} Hz`,
-    "ok"
-  );
-
-  $("analyze-section").hidden = false;
 }
 
+/* ---------- 2. Analyze ---------- */
+
 async function runAnalyze() {
+  const btn = $("analyze-btn");
   const body = {
     filters: {
       highpass: parseFloat($("f-hp").value) || null,
@@ -82,70 +310,86 @@ async function runAnalyze() {
     eeg_channels: Array.from($("eeg-channel").options).map((o) => o.value),
   };
 
-  setInfo($("markers-info"), "Procesando...");
-  const res = await fetch("/api/analyze", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  clearError("analyze-error");
+  setInfo($("markers-info"), "Procesando…", "work");
+  setStep(2, "Procesando…", "active");
+  setButtonLoading(btn, true);
+  setPlotLoading($("emg-plot"), true);
+  hideEmpty("emg-empty");
 
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    setInfo($("markers-info"), "Error: " + err.detail, "err");
-    return;
-  }
+  try {
+    const res = await fetch("/api/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || res.statusText);
+    }
+    const data = await res.json();
+    setInfo($("markers-info"), `${data.n_markers} contracciones detectadas`, "ok");
+    $("analyze-chips").hidden = false;
+    $("chip-markers").textContent = data.n_markers;
+    $("chip-threshold").textContent = (data.threshold ?? parseFloat($("b-threshold").value)).toFixed(2);
+    $("export-btn").disabled = data.n_markers === 0;
 
-  const data = await res.json();
-  setInfo($("markers-info"), `${data.n_markers} marcadores detectados`, "ok");
-  $("export-btn").disabled = data.n_markers === 0;
+    plotEmg(data);
 
-  plotEmg(data);
+    lockCard("card-4");
+    setStep(4, "Requiere paso 3", "locked");
+    $("reorder-chips").hidden = true;
 
-  $("reorder-section").hidden = true;
-  if (data.n_markers > 0) {
-    $("segment-section").hidden = false;
+    if (data.n_markers > 0) {
+      unlockCard("card-3");
+      setStep(2, `${data.n_markers} contracciones`, "done");
+      setStep(3, "Listo para calcular", "active");
+    } else {
+      lockCard("card-3");
+      setStep(2, "Sin contracciones", "error");
+      setStep(3, "Requiere paso 2", "locked");
+    }
+  } catch (e) {
+    showError("analyze-error", e.message);
+    setInfo($("markers-info"), "Error de análisis", "err");
+    setStep(2, "Error", "error");
+    showEmpty("emg-empty");
+  } finally {
+    setButtonLoading(btn, false);
+    setPlotLoading($("emg-plot"), false);
   }
 }
 
 function plotEmg(data) {
-  const traces = [
-    {
-      x: data.time,
-      y: data.emg_scaled,
-      type: "scattergl",
-      mode: "lines",
-      name: "EMG rectificado (escalado)",
-      line: { color: "#4f8cff", width: 1 },
-    },
-  ];
-
+  const { ACCENT, SIGNAL, DANGER } = themeAccents();
+  const traces = [{
+    x: data.time, y: data.emg_scaled,
+    type: "scattergl", mode: "lines",
+    name: "EMG",
+    line: { color: ACCENT, width: 1 },
+    hovertemplate: "t=%{x:.3f}s · %{y:.3f}<extra></extra>",
+  }];
   const shapes = [
-    {
-      type: "line",
-      xref: "paper",
-      x0: 0, x1: 1,
-      y0: data.threshold, y1: data.threshold,
-      line: { color: "#ff5d5d", width: 1, dash: "dot" },
-    },
+    { type: "line", xref: "paper", x0: 0, x1: 1, y0: data.threshold, y1: data.threshold,
+      line: { color: DANGER, width: 1, dash: "dot" } },
     ...data.marker_times.map((t) => ({
-      type: "line",
-      x0: t, x1: t,
-      yref: "paper",
-      y0: 0, y1: 1,
-      line: { color: "#5cd98c", width: 1 },
+      type: "line", x0: t, x1: t, yref: "paper", y0: 0, y1: 1,
+      line: { color: SIGNAL, width: 1 }, opacity: 0.7,
     })),
   ];
-
   Plotly.newPlot("emg-plot", traces, {
-    ...PLOT_LAYOUT,
-    title: { text: "EMG + marcadores", font: { size: 13 } },
-    xaxis: { title: "Tiempo (s)" },
-    yaxis: { title: "Amplitud escalada" },
-    shapes,
+    ...plotLayout(),
+    title: { text: "Señal muscular y contracciones detectadas", font: { size: 12.5 }, x: 0.01 },
+    xaxis: { ...plotLayout().xaxis, title: { text: "Tiempo (s)", font: { size: 11 } } },
+    yaxis: { ...plotLayout().yaxis, title: { text: "Amplitud", font: { size: 11 } } },
+    shapes, showlegend: false,
   }, PLOT_CONFIG);
 }
 
+/* ---------- 3. Segment / ERP ---------- */
+
 async function runSegment() {
+  const btn = $("segment-btn");
   const body = {
     eeg_channel: $("eeg-channel").value,
     window: parseFloat($("s-window").value),
@@ -153,106 +397,149 @@ async function runSegment() {
     baseline: parseFloat($("s-baseline").value),
   };
 
-  setInfo($("segment-info"), "Procesando...");
-  const res = await fetch("/api/segment", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  clearError("segment-error");
+  setInfo($("segment-info"), "Procesando…", "work");
+  setStep(3, "Procesando…", "active");
+  setButtonLoading(btn, true);
+  setPlotLoading($("erp-plot"), true);
+  hideEmpty("erp-empty");
 
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    setInfo($("segment-info"), "Error: " + err.detail, "err");
-    return;
+  try {
+    const res = await fetch("/api/segment", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || res.statusText);
+    }
+    const data = await res.json();
+    setInfo($("segment-info"), `Respuesta promediada sobre ${data.n_trials} repeticiones`, "ok");
+    $("segment-chips").hidden = false;
+    $("chip-trials").textContent = data.n_trials;
+    plotErp(data);
+
+    unlockCard("card-4");
+    setStep(3, `${data.n_trials} repeticiones`, "done");
+    setStep(4, "Listo para comparar", "active");
+  } catch (e) {
+    showError("segment-error", e.message);
+    setInfo($("segment-info"), "Error al calcular", "err");
+    setStep(3, "Error", "error");
+    showEmpty("erp-empty");
+  } finally {
+    setButtonLoading(btn, false);
+    setPlotLoading($("erp-plot"), false);
   }
-
-  const data = await res.json();
-  setInfo($("segment-info"), `ERP promediado sobre ${data.n_trials} trials`, "ok");
-  plotErp(data);
-  $("reorder-section").hidden = false;
 }
 
 function plotErp(data) {
+  const { ACCENT, SIGNAL } = themeAccents();
   const traces = [
-    {
-      x: data.t, y: data.eeg_avg,
-      type: "scatter", mode: "lines",
-      name: "EEG promedio",
-      line: { color: "#4f8cff", width: 2 },
-      yaxis: "y1",
-    },
-    {
-      x: data.t, y: data.emg_avg,
-      type: "scatter", mode: "lines",
-      name: "EMG promedio",
-      line: { color: "#5cd98c", width: 1 },
-      yaxis: "y2",
-    },
+    { x: data.t, y: data.eeg_avg, type: "scatter", mode: "lines",
+      name: "Cerebro (promedio)", line: { color: ACCENT, width: 2 }, yaxis: "y1",
+      hovertemplate: "t=%{x:.3f}s · %{y:.4f} µV<extra>Cerebro</extra>" },
+    { x: data.t, y: data.emg_avg, type: "scatter", mode: "lines",
+      name: "Músculo (promedio)", line: { color: SIGNAL, width: 1.2 }, yaxis: "y2",
+      hovertemplate: "t=%{x:.3f}s · %{y:.4f}<extra>Músculo</extra>" },
   ];
-
+  const L = plotLayout();
   Plotly.newPlot("erp-plot", traces, {
-    ...PLOT_LAYOUT,
-    title: { text: `ERP (${data.n_trials} trials)`, font: { size: 13 } },
-    xaxis: { title: "Tiempo relativo al marcador (s)", zeroline: true, zerolinecolor: "#5cd98c" },
-    yaxis: { title: "EEG (µV)", side: "left" },
-    yaxis2: { title: "EMG", overlaying: "y", side: "right", showgrid: false },
-    legend: { x: 0, y: 1.1, orientation: "h" },
+    ...L,
+    title: { text: `Respuesta promedio · ${data.n_trials} repeticiones`, font: { size: 12.5 }, x: 0.01 },
+    xaxis: { ...L.xaxis, title: { text: "Tiempo relativo al movimiento (s)", font: { size: 11 } }, zeroline: true, zerolinecolor: SIGNAL, zerolinewidth: 1 },
+    yaxis: { ...L.yaxis, title: { text: "Cerebro (µV)", font: { size: 11 } }, side: "left" },
+    yaxis2: { title: { text: "Músculo", font: { size: 11 } }, overlaying: "y", side: "right", showgrid: false, tickfont: { size: 11, color: L.xaxis.tickfont.color }, linecolor: L.xaxis.linecolor },
+    legend: { x: 0, y: 1.12, orientation: "h", font: { size: 11 } },
   }, PLOT_CONFIG);
 }
+
+/* ---------- 4. Reorder ---------- */
 
 async function runReorder() {
+  const btn = $("reorder-btn");
   const body = { n_groups: parseInt($("r-n-groups").value, 10) };
 
-  setInfo($("reorder-info"), "Procesando...");
-  const res = await fetch("/api/reorder_split", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  clearError("reorder-error");
+  setInfo($("reorder-info"), "Procesando…", "work");
+  setStep(4, "Procesando…", "active");
+  setButtonLoading(btn, true);
+  setPlotLoading($("reorder-plot"), true);
+  hideEmpty("reorder-empty");
 
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    setInfo($("reorder-info"), "Error: " + err.detail, "err");
-    return;
+  try {
+    const res = await fetch("/api/reorder_split", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || res.statusText);
+    }
+    const data = await res.json();
+    const sizes = data.groups.map((g) => g.n_trials).join(" / ");
+    setInfo($("reorder-info"), `${data.n_total_trials} repeticiones → ${data.groups.length} grupos (${sizes})`, "ok");
+    $("reorder-chips").hidden = false;
+    $("chip-groups").textContent = data.groups.length;
+    $("chip-split").textContent = sizes;
+    plotReorder(data);
+    setStep(4, `${data.groups.length} grupos`, "done");
+  } catch (e) {
+    showError("reorder-error", e.message);
+    setInfo($("reorder-info"), "Error al comparar", "err");
+    setStep(4, "Error", "error");
+    showEmpty("reorder-empty");
+  } finally {
+    setButtonLoading(btn, false);
+    setPlotLoading($("reorder-plot"), false);
   }
-
-  const data = await res.json();
-  const sizes = data.groups.map((g) => g.n_trials).join(" / ");
-  setInfo(
-    $("reorder-info"),
-    `${data.n_total_trials} trials → ${data.groups.length} grupos (${sizes})`,
-    "ok"
-  );
-  plotReorder(data);
 }
 
-const GROUP_COLORS = ["#4f8cff", "#5cd98c", "#ffb84d", "#ff5d5d", "#b88dff", "#5cd9d9"];
-
 function plotReorder(data) {
+  const { SIGNAL } = themeAccents();
+  refreshGroupColors();
   const traces = data.groups.map((g, i) => ({
-    x: data.t,
-    y: g.avg,
-    type: "scatter",
-    mode: "lines",
+    x: data.t, y: g.avg, type: "scatter", mode: "lines",
     name: `Grupo ${i + 1} (n=${g.n_trials})`,
     line: { color: GROUP_COLORS[i % GROUP_COLORS.length], width: 1.8 },
+    hovertemplate: `t=%{x:.3f}s · %{y:.4f}<extra>Grupo ${i + 1}</extra>`,
   }));
-
+  const L = plotLayout();
   Plotly.newPlot("reorder-plot", traces, {
-    ...PLOT_LAYOUT,
-    title: { text: "EEG promedio por grupo (reorden aleatorio)", font: { size: 13 } },
-    xaxis: { title: "Tiempo relativo al marcador (s)", zeroline: true, zerolinecolor: "#5cd98c" },
-    yaxis: { title: "EEG (µV)" },
-    legend: { x: 0, y: 1.1, orientation: "h" },
+    ...L,
+    title: { text: "Respuesta promedio por grupo", font: { size: 12.5 }, x: 0.01 },
+    xaxis: { ...L.xaxis, title: { text: "Tiempo relativo al movimiento (s)", font: { size: 11 } }, zeroline: true, zerolinecolor: SIGNAL, zerolinewidth: 1 },
+    yaxis: { ...L.yaxis, title: { text: "Cerebro (µV)", font: { size: 11 } } },
+    legend: { x: 0, y: 1.12, orientation: "h", font: { size: 11 } },
   }, PLOT_CONFIG);
 }
 
-function downloadMarkers() {
-  window.location.href = "/api/export/markers";
-}
+/* ---------- Export ---------- */
+
+function downloadMarkers() { window.location.href = "/api/export/markers"; }
+
+/* ---------- Event wiring ---------- */
+
+initTheme();
+refreshGroupColors();
+initPatient();
 
 $("upload-btn").addEventListener("click", uploadFile);
 $("analyze-btn").addEventListener("click", runAnalyze);
 $("segment-btn").addEventListener("click", runSegment);
 $("export-btn").addEventListener("click", downloadMarkers);
 $("reorder-btn").addEventListener("click", runReorder);
+
+document.querySelectorAll(".step").forEach((s) => {
+  s.addEventListener("click", (e) => {
+    if (s.classList.contains("is-locked")) { e.preventDefault(); return; }
+    const n = s.dataset.step;
+    const target = $(`card-${n}`);
+    if (target) { e.preventDefault(); target.scrollIntoView({ behavior: "smooth", block: "start" }); }
+  });
+});
+
+$("file-input").addEventListener("change", () => {
+  const f = $("file-input").files[0];
+  if (f) setInfo($("upload-info"), `${f.name} · listo para cargar`, "");
+});

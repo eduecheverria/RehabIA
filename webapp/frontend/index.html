@@ -2,103 +2,273 @@
 <html lang="es">
 <head>
   <meta charset="utf-8" />
-  <title>RehabIA — Análisis EEG/EMG</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RehabIA — Análisis clínico</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/style.css" />
+  <script>
+    // Apply saved theme before paint to avoid flash
+    (function () {
+      try {
+        var t = localStorage.getItem("rehabia.theme") || "light";
+        document.documentElement.setAttribute("data-theme", t);
+      } catch (e) {
+        document.documentElement.setAttribute("data-theme", "light");
+      }
+    })();
+  </script>
   <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 </head>
 <body>
-  <header>
-    <h1>RehabIA</h1>
-    <span class="subtitle">EEG/EMG — detección de bursts y ERP</span>
-  </header>
-
-  <main>
-    <!-- 1. Upload -->
-    <section class="card">
-      <h2>1. Cargar archivo</h2>
-      <div class="row">
-        <input type="file" id="file-input" accept=".txt,.csv" />
-        <button id="upload-btn">Cargar</button>
-      </div>
-      <div id="upload-info" class="info"></div>
-    </section>
-
-    <!-- 2. Filters + burst detection -->
-    <section class="card" id="analyze-section" hidden>
-      <h2>2. Filtros y detección de bursts</h2>
-
-      <details open>
-        <summary>Filtros</summary>
-        <div class="grid">
-          <label>Highpass (Hz)<input type="number" id="f-hp" value="1" step="0.1" /></label>
-          <label>Lowpass (Hz)<input type="number" id="f-lp" value="100" step="1" /></label>
-          <label>Notch (Hz)<input type="number" id="f-notch" value="50" step="1" /></label>
+  <div class="app">
+    <aside class="rail" aria-label="Navegación de sesión">
+      <div class="brand">
+        <div class="brand-mark">
+          <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
+            <rect x="0.75" y="0.75" width="20.5" height="20.5" rx="5" stroke="currentColor" stroke-opacity="0.35"/>
+            <path d="M3 12 L6 12 L7.5 7 L9.5 16 L11.5 9 L13.5 14 L15 11 L19 11"
+                  stroke="var(--accent)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+          </svg>
+          <h1>RehabIA</h1>
         </div>
-      </details>
+        <span class="brand-sub">Rehabilitación motora</span>
+      </div>
 
-      <details open>
-        <summary>Canales</summary>
-        <div class="grid">
-          <label>EMG<select id="emg-channel"></select></label>
-          <label>EEG (para ERP)<select id="eeg-channel"></select></label>
+      <!-- Theme toggle -->
+      <div class="theme-toggle" role="group" aria-label="Tema de la interfaz">
+        <button type="button" data-theme-set="light" id="theme-light" title="Modo claro">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+          Claro
+        </button>
+        <button type="button" data-theme-set="dark" id="theme-dark" title="Modo oscuro">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          Oscuro
+        </button>
+      </div>
+
+      <div class="session">
+        <div class="session-title">Registro cargado</div>
+        <div class="session-grid">
+          <div class="meta"><span class="meta-k">Archivo</span><span class="meta-v placeholder" id="m-file">— sin cargar —</span></div>
+          <div class="meta"><span class="meta-k">Muestras</span><span class="meta-v placeholder" id="m-samples">—</span></div>
+          <div class="meta"><span class="meta-k">Duración</span><span class="meta-v placeholder" id="m-duration">—</span></div>
+          <div class="meta"><span class="meta-k">Frec. muestreo</span><span class="meta-v placeholder" id="m-srate">—</span></div>
         </div>
-      </details>
+      </div>
 
-      <details open>
-        <summary>Parámetros de burst</summary>
-        <div class="grid">
-          <label>Umbral<input type="number" id="b-threshold" value="0.2" step="0.01" min="0" max="1" /></label>
-          <label>Duración mín. (s)<input type="number" id="b-duration" value="0.4" step="0.05" /></label>
-          <label>Tiempo antes (s)<input type="number" id="b-time-before" value="0.02" step="0.01" /></label>
-          <label>Tiempo después (s)<input type="number" id="b-time-after" value="0.02" step="0.01" /></label>
-          <label>Amplitud antes (máx)<input type="number" id="b-before-a" value="0.20" step="0.01" /></label>
-          <label>Amplitud después (mín)<input type="number" id="b-after-a" value="0.15" step="0.01" /></label>
+      <nav class="steps" aria-label="Pasos del análisis">
+        <div class="steps-title">Evaluación</div>
+        <a class="step is-active" data-step="1" href="#card-1"><span class="step-dot"><span>1</span></span><span class="step-body"><span class="step-name">Cargar registro</span><span class="step-status" id="st-1">Pendiente</span></span></a>
+        <a class="step is-locked" data-step="2" href="#card-2"><span class="step-dot"><span>2</span></span><span class="step-body"><span class="step-name">Actividad muscular</span><span class="step-status" id="st-2">Requiere paso 1</span></span></a>
+        <a class="step is-locked" data-step="3" href="#card-3"><span class="step-dot"><span>3</span></span><span class="step-body"><span class="step-name">Respuesta cerebral</span><span class="step-status" id="st-3">Requiere paso 2</span></span></a>
+        <a class="step is-locked" data-step="4" href="#card-4"><span class="step-dot"><span>4</span></span><span class="step-body"><span class="step-name">Verificar consistencia</span><span class="step-status" id="st-4">Requiere paso 3</span></span></a>
+      </nav>
+
+      <div class="rail-foot"><span class="pulse" aria-hidden="true"></span><span>Uso clínico local</span></div>
+    </aside>
+
+    <main>
+
+      <!-- Patient card -->
+      <section class="card" id="card-patient">
+        <header class="card-head">
+          <span class="card-idx" aria-hidden="true">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          </span>
+          <h2>Datos del paciente</h2>
+        </header>
+
+        <!-- VIEW MODE -->
+        <div class="patient" id="patient-view">
+          <div class="patient-avatar" id="p-avatar">??</div>
+          <div class="patient-main">
+            <div class="patient-line">
+              <span class="patient-name placeholder" id="p-name">Sin datos del paciente</span>
+              <span class="patient-id" id="p-id" hidden>ID —</span>
+            </div>
+            <div class="patient-meta" id="p-meta">
+              <span><b>Fecha:</b><span id="p-date">—</span></span>
+              <span><b>N.º de sesión:</b><span id="p-session">—</span></span>
+              <span><b>Diagnóstico:</b><span id="p-dx">—</span></span>
+              <span><b>Profesional:</b><span id="p-therapist">—</span></span>
+            </div>
+            <div class="patient-meta" id="p-notes-wrap" hidden>
+              <span><b>Notas:</b><span id="p-notes"></span></span>
+            </div>
+          </div>
+          <button class="edit-btn" id="patient-edit-btn" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+            Editar
+          </button>
         </div>
-      </details>
 
-      <div class="row">
-        <button id="analyze-btn">Analizar</button>
-        <button id="export-btn" disabled>Exportar marcadores CSV</button>
-        <span id="markers-info" class="info"></span>
-      </div>
+        <!-- EDIT MODE -->
+        <div class="patient-edit" id="patient-edit">
+          <label>Nombre completo <input type="text" id="p-in-name" placeholder="Ej. María González" autocomplete="off"></label>
+          <label>N.º de historia clínica <input type="text" id="p-in-id" placeholder="Ej. HC-00842" autocomplete="off"></label>
+          <label>Fecha de la sesión <input type="date" id="p-in-date"></label>
+          <label>N.º de sesión <input type="text" id="p-in-session" placeholder="Ej. 5" autocomplete="off"></label>
+          <label>Diagnóstico <input type="text" id="p-in-dx" placeholder="Ej. ACV isquémico derecho" autocomplete="off"></label>
+          <label>Profesional a cargo <input type="text" id="p-in-therapist" placeholder="Ej. Dra. Pérez" autocomplete="off"></label>
+          <label class="full">Observaciones de la sesión <textarea id="p-in-notes" rows="2" placeholder="Estado del paciente, objetivos, notas relevantes…"></textarea></label>
+          <div class="patient-edit-actions">
+            <button class="secondary" type="button" id="patient-cancel-btn">Cancelar</button>
+            <button type="button" id="patient-save-btn">Guardar</button>
+          </div>
+        </div>
+      </section>
 
-      <div id="emg-plot" class="plot"></div>
-    </section>
+      <!-- 1. Upload -->
+      <section class="card" id="card-1">
+        <header class="card-head"><span class="card-idx">1</span><h2>Cargar registro</h2></header>
+        <div class="card-body">
+          <div class="dropzone">
+            <div class="dz-ico" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            </div>
+            <div class="dz-body">
+              <div class="dz-title">Seleccione el registro del paciente <span class="hint">TXT o CSV</span></div>
+              <div class="dz-row">
+                <input type="file" id="file-input" accept=".txt,.csv" />
+                <button id="upload-btn">Cargar</button>
+                <span id="upload-info" class="info"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
 
-    <!-- 3. ERP -->
-    <section class="card" id="segment-section" hidden>
-      <h2>3. Segmentación y ERP</h2>
-      <div class="grid">
-        <label>Ventana (s)<input type="number" id="s-window" value="2.0" step="0.1" /></label>
-        <label>Onset (s)<input type="number" id="s-onset" value="1.0" step="0.1" /></label>
-        <label>Baseline (s)<input type="number" id="s-baseline" value="0.1" step="0.05" /></label>
-      </div>
+      <!-- 2. Filters + bursts -->
+      <section class="card is-locked" id="card-2">
+        <header class="card-head"><span class="card-idx">2</span><h2>Actividad muscular</h2></header>
+        <div class="card-body">
+          <div id="analyze-section">
+            <details class="group" open>
+              <summary>Limpieza de señal</summary>
+              <div class="group-body">
+                <div class="grid">
+                  <label>Pasa-altos <span class="hint">(Hz)</span><input type="number" id="f-hp" value="1" step="0.1" /></label>
+                  <label>Pasa-bajos <span class="hint">(Hz)</span><input type="number" id="f-lp" value="100" step="1" /></label>
+                  <label>Red eléctrica <span class="hint">(Hz)</span><input type="number" id="f-notch" value="50" step="1" /></label>
+                </div>
+              </div>
+            </details>
+            <details class="group" open>
+              <summary>Canales</summary>
+              <div class="group-body">
+                <div class="grid cols-2">
+                  <label>Músculo<select id="emg-channel"></select></label>
+                  <label>Electrodo cerebral<select id="eeg-channel"></select></label>
+                </div>
+              </div>
+            </details>
+            <details class="group" open>
+              <summary>Detección de contracciones</summary>
+              <div class="group-body">
+                <div class="grid">
+                  <label>Sensibilidad <span class="hint">(0–1)</span><input type="number" id="b-threshold" value="0.2" step="0.01" min="0" max="1" /></label>
+                  <label>Duración mínima <span class="hint">(s)</span><input type="number" id="b-duration" value="0.4" step="0.05" /></label>
+                  <label>Margen previo <span class="hint">(s)</span><input type="number" id="b-time-before" value="0.02" step="0.01" /></label>
+                  <label>Margen posterior <span class="hint">(s)</span><input type="number" id="b-time-after" value="0.02" step="0.01" /></label>
+                  <label>Reposo previo <span class="hint">(máx)</span><input type="number" id="b-before-a" value="0.20" step="0.01" /></label>
+                  <label>Contracción sostenida <span class="hint">(mín)</span><input type="number" id="b-after-a" value="0.15" step="0.01" /></label>
+                </div>
+              </div>
+            </details>
+            <div class="actions">
+              <button id="analyze-btn">Analizar</button>
+              <button id="export-btn" class="secondary" disabled>Exportar eventos (CSV)</button>
+              <span id="markers-info" class="info"></span>
+              <div class="chips" id="analyze-chips" hidden>
+                <span class="chip signal"><b id="chip-markers">0</b> contracciones</span>
+                <span class="chip"><b id="chip-threshold">—</b> sensibilidad</span>
+              </div>
+            </div>
+            <div class="error-panel" id="analyze-error">
+              <div class="err-ico">!</div>
+              <div><div class="err-title">No se pudo analizar</div><div class="err-body" data-err-msg>—</div></div>
+            </div>
+            <div class="plot-wrap">
+              <div id="emg-plot" class="plot tall"></div>
+              <div class="plot-skel"></div>
+              <div class="plot-empty" id="emg-empty">
+                <div class="plot-empty-ico" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12 L7 12 L9 6 L11 18 L13 9 L15 15 L17 12 L21 12"/></svg></div>
+                <div class="plot-empty-title">Aún no hay análisis</div>
+                <div class="plot-empty-hint">Ajuste los parámetros y pulse <b>Analizar</b> para visualizar cuándo el paciente activa el músculo durante la sesión.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
 
-      <div class="row">
-        <button id="segment-btn">Segmentar</button>
-        <span id="segment-info" class="info"></span>
-      </div>
+      <!-- 3. ERP -->
+      <section class="card is-locked" id="card-3">
+        <header class="card-head"><span class="card-idx">3</span><h2>Respuesta cerebral al movimiento</h2></header>
+        <div class="card-body">
+          <div id="segment-section">
+            <div class="grid">
+              <label>Ventana de análisis <span class="hint">(s)</span><input type="number" id="s-window" value="2.0" step="0.1" /></label>
+              <label>Tiempo antes del movimiento <span class="hint">(s)</span><input type="number" id="s-onset" value="1.0" step="0.1" /></label>
+              <label>Línea de base <span class="hint">(s)</span><input type="number" id="s-baseline" value="0.1" step="0.05" /></label>
+            </div>
+            <div class="actions">
+              <button id="segment-btn">Calcular respuesta</button>
+              <span id="segment-info" class="info"></span>
+              <div class="chips" id="segment-chips" hidden><span class="chip accent"><b id="chip-trials">0</b> repeticiones</span></div>
+            </div>
+            <div class="error-panel" id="segment-error">
+              <div class="err-ico">!</div>
+              <div><div class="err-title">No se pudo calcular la respuesta</div><div class="err-body" data-err-msg>—</div></div>
+            </div>
+            <div class="plot-wrap">
+              <div id="erp-plot" class="plot"></div>
+              <div class="plot-skel"></div>
+              <div class="plot-empty" id="erp-empty">
+                <div class="plot-empty-ico" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 14 C6 14, 7 7, 10 7 C13 7, 13 17, 16 17 C18 17, 19 11, 21 11"/><line x1="12" y1="3" x2="12" y2="21" stroke-dasharray="2 3" opacity="0.6"/></svg></div>
+                <div class="plot-empty-title">Respuesta aún no calculada</div>
+                <div class="plot-empty-hint">Pulse <b>Calcular respuesta</b> para obtener la actividad cerebral promedio antes y después de cada movimiento.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
 
-      <div id="erp-plot" class="plot"></div>
-    </section>
-
-    <!-- 4. Reorder & split -->
-    <section class="card" id="reorder-section" hidden>
-      <h2>4. Reorder &amp; split</h2>
-      <p class="info">
-        Reordena los trials al azar, los parte en grupos y grafica el promedio de cada grupo.
-        Si la forma se mantiene entre grupos, el ERP es consistente.
-      </p>
-      <div class="grid">
-        <label>Nº de grupos<input type="number" id="r-n-groups" value="2" min="2" max="6" step="1" /></label>
-      </div>
-      <div class="row">
-        <button id="reorder-btn">Reordenar y partir</button>
-        <span id="reorder-info" class="info"></span>
-      </div>
-      <div id="reorder-plot" class="plot"></div>
-    </section>
-  </main>
+      <!-- 4. Reorder -->
+      <section class="card is-locked" id="card-4">
+        <header class="card-head"><span class="card-idx">4</span><h2>Verificar consistencia</h2></header>
+        <div class="card-body">
+          <div id="reorder-section">
+            <div class="grid">
+              <label>Cantidad de grupos <span class="hint">(2–6)</span><input type="number" id="r-n-groups" value="2" min="2" max="6" step="1" /></label>
+            </div>
+            <div class="actions">
+              <button id="reorder-btn">Comparar grupos</button>
+              <span id="reorder-info" class="info"></span>
+              <div class="chips" id="reorder-chips" hidden>
+                <span class="chip"><b id="chip-groups">—</b> grupos</span>
+                <span class="chip signal"><b id="chip-split">—</b></span>
+              </div>
+            </div>
+            <div class="error-panel" id="reorder-error">
+              <div class="err-ico">!</div>
+              <div><div class="err-title">No se pudo comparar</div><div class="err-body" data-err-msg>—</div></div>
+            </div>
+            <div class="plot-wrap">
+              <div id="reorder-plot" class="plot"></div>
+              <div class="plot-skel"></div>
+              <div class="plot-empty" id="reorder-empty">
+                <div class="plot-empty-ico" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10 C6 10, 7 5, 10 5 C13 5, 13 15, 16 15 C18 15, 19 9, 21 9"/><path d="M3 18 C6 18, 7 13, 10 13 C13 13, 13 19, 16 19 C18 19, 19 15, 21 15" opacity="0.55"/></svg></div>
+                <div class="plot-empty-title">Sin comparación por grupos</div>
+                <div class="plot-empty-hint">Separe los movimientos en grupos y pulse <b>Comparar grupos</b>. Si las curvas son similares, la respuesta del paciente es estable.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
 
   <script src="/static/app.js"></script>
 </body>
