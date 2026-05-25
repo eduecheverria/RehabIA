@@ -31,4 +31,4 @@ ipykernel>=6.25.0
 
 # Opcional: para análisis más avanzados
 # mne>=1.4.0     # Para análisis EEG/MEG más especializado
-pywavelets>=1.4.0  # Para features wavelet en sección 11
+pywavelets>=1.4.0  # Para features wavelet en sección 1
