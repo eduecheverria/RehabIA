@@ -1,14 +1,1 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(micromamba --version)",
-      "Read(//home/rafoxxa-ihealth/.claude/**)",
-      "WebSearch",
-      "WebFetch(domain:pmc.ncbi.nlm.nih.gov)",
-      "WebFetch(domain:www.ifcn.info)",
-      "WebFetch(domain:www.researchgate.net)",
-      "WebFetch(domain:github.com)",
-      "Bash(python3 -c ' *)"
-    ]
-  }
-}
+{}
