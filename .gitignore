@@ -1,5 +1,5 @@
-# Windows metadata
-*_Zone.Identifier
+# Windows metadata (Mark of the Web — rompe checkouts en NTFS)
+*Zone.Identifier
 
 # Python cache
 __pycache__/
