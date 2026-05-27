@@ -8,7 +8,8 @@
       "WebFetch(domain:www.ifcn.info)",
       "WebFetch(domain:www.researchgate.net)",
       "WebFetch(domain:github.com)",
-      "Bash(python3 -c ' *)"
+      "Bash(python3 -c ' *)",
+      "Bash(pip install *)"
     ]
   }
 }
