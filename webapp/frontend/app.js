@@ -7,6 +7,11 @@ const $ = (id) => document.getElementById(id);
 
 const state = { columns: [], srate: null };
 
+/* Live preview of burst detection — activates after first Analyze */
+let previewEnabled = false;
+let previewTimer = null;
+let previewAbort = null;
+
 /* ---------- Plot theming (reads CSS vars so dark/light work) ---------- */
 
 function plotColors() {
@@ -290,9 +295,8 @@ async function uploadFile() {
 
 /* ---------- 2. Analyze ---------- */
 
-async function runAnalyze() {
-  const btn = $("analyze-btn");
-  const body = {
+function buildAnalyzeBody() {
+  return {
     filters: {
       highpass: parseFloat($("f-hp").value) || null,
       lowpass: parseFloat($("f-lp").value) || null,
@@ -309,6 +313,11 @@ async function runAnalyze() {
     emg_channel: $("emg-channel").value,
     eeg_channels: Array.from($("eeg-channel").options).map((o) => o.value),
   };
+}
+
+async function runAnalyze() {
+  const btn = $("analyze-btn");
+  const body = buildAnalyzeBody();
 
   clearError("analyze-error");
   setInfo($("markers-info"), "Procesando…", "work");
@@ -342,13 +351,19 @@ async function runAnalyze() {
 
     if (data.n_markers > 0) {
       unlockCard("card-3");
+      unlockCard("card-5");
       setStep(2, `${data.n_markers} contracciones`, "done");
       setStep(3, "Listo para calcular", "active");
+      setStep(5, "Listo para comparar", "active");
     } else {
       lockCard("card-3");
+      lockCard("card-5");
       setStep(2, "Sin contracciones", "error");
       setStep(3, "Requiere paso 2", "locked");
+      setStep(5, "Requiere paso 2", "locked");
     }
+
+    previewEnabled = true;
   } catch (e) {
     showError("analyze-error", e.message);
     setInfo($("markers-info"), "Error de análisis", "err");
@@ -384,6 +399,58 @@ function plotEmg(data) {
     yaxis: { ...plotLayout().yaxis, title: { text: "Amplitud", font: { size: 11 } } },
     shapes, showlegend: false,
   }, PLOT_CONFIG);
+}
+
+/* ---------- 2b. Live preview of burst detection ---------- */
+
+function schedulePreview() {
+  if (!previewEnabled) return;
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(runPreview, 300);
+}
+
+function updateMarkersOnly(data) {
+  const { SIGNAL, DANGER } = themeAccents();
+  const shapes = [
+    {
+      type: "line", xref: "paper",
+      x0: 0, x1: 1, y0: data.threshold, y1: data.threshold,
+      line: { color: DANGER, width: 1, dash: "dot" },
+    },
+    ...data.marker_times.map((t) => ({
+      type: "line", x0: t, x1: t, yref: "paper", y0: 0, y1: 1,
+      line: { color: SIGNAL, width: 1 }, opacity: 0.7,
+    })),
+  ];
+  Plotly.relayout("emg-plot", { shapes });
+}
+
+async function runPreview() {
+  if (previewAbort) previewAbort.abort();
+  previewAbort = new AbortController();
+
+  try {
+    const res = await fetch("/api/burst_preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(buildAnalyzeBody()),
+      signal: previewAbort.signal,
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+
+    if (data.signal_changed === false) {
+      updateMarkersOnly(data);
+    } else {
+      plotEmg(data);
+    }
+
+    $("chip-markers").textContent = data.n_markers;
+    $("chip-threshold").textContent = (data.threshold ?? parseFloat($("b-threshold").value)).toFixed(2);
+    setInfo($("markers-info"), `${data.n_markers} contracciones (vista previa — apretá Analizar para confirmar)`, "work");
+  } catch (e) {
+    /* silent: aborted requests are expected when typing fast */
+  }
 }
 
 /* ---------- 3. Segment / ERP ---------- */
@@ -514,6 +581,141 @@ function plotReorder(data) {
   }, PLOT_CONFIG);
 }
 
+/* ---------- 5. Compare methods (clustering) ---------- */
+
+const CLUSTER_COLORS = { burst: "#2ca06f", rest: "#c06a4a" };
+
+async function initClusterFeatures() {
+  try {
+    const res = await fetch("/api/cluster_features");
+    if (!res.ok) return;
+    const { features } = await res.json();
+    const selX = $("cl-feat-x");
+    const selY = $("cl-feat-y");
+    selX.innerHTML = "";
+    selY.innerHTML = "";
+    for (const f of features) {
+      selX.appendChild(new Option(f, f));
+      selY.appendChild(new Option(f, f));
+    }
+    selX.value = "RMS";
+    selY.value = "BandPow_20-150";
+  } catch (e) { /* silent */ }
+}
+
+async function runCluster() {
+  const btn = $("cluster-btn");
+  const body = {
+    feature_x: $("cl-feat-x").value,
+    feature_y: $("cl-feat-y").value,
+    win_s: parseFloat($("cl-win").value),
+    hop_s: parseFloat($("cl-hop").value),
+    tolerance_s: parseFloat($("cl-tol").value),
+  };
+
+  clearError("cluster-error");
+  setInfo($("cluster-info"), "Procesando… (la primera vez extrae features, ~unos segundos)", "work");
+  setStep(5, "Procesando…", "active");
+  setButtonLoading(btn, true);
+  setPlotLoading($("cluster-scatter"), true);
+  hideEmpty("cluster-empty");
+
+  try {
+    const res = await fetch("/api/cluster_compare", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || res.statusText);
+    }
+    const data = await res.json();
+    const m = data.metrics;
+
+    setInfo(
+      $("cluster-info"),
+      `BacAv: ${m.n_bacav} · K-Means: ${m.n_kmeans} · coincidencia ${m.precision}% / ${m.recall}%`,
+      "ok"
+    );
+    $("cluster-chips").hidden = false;
+    $("chip-prec").textContent = `${m.matched_bacav}/${m.n_bacav} (${m.precision}%)`;
+    $("chip-recall").textContent = `${m.matched_kmeans}/${m.n_kmeans} (${m.recall}%)`;
+
+    plotClusterScatter(data);
+    plotClusterTimeline(data);
+    setStep(5, `${m.precision}% / ${m.recall}%`, "done");
+  } catch (e) {
+    showError("cluster-error", e.message);
+    setInfo($("cluster-info"), "Error al comparar", "err");
+    setStep(5, "Error", "error");
+    showEmpty("cluster-empty");
+  } finally {
+    setButtonLoading(btn, false);
+    setPlotLoading($("cluster-scatter"), false);
+  }
+}
+
+function plotClusterScatter(data) {
+  const burst = data.burst_cluster;
+  const sc = data.scatter;
+  const groups = { burst: { x: [], y: [] }, rest: { x: [], y: [] } };
+  for (let i = 0; i < sc.x.length; i++) {
+    const g = sc.labels[i] === burst ? "burst" : "rest";
+    groups[g].x.push(sc.x[i]);
+    groups[g].y.push(sc.y[i]);
+  }
+
+  const traces = [
+    {
+      x: groups.rest.x, y: groups.rest.y, type: "scattergl", mode: "markers",
+      name: "Reposo", marker: { color: CLUSTER_COLORS.rest, size: 3, opacity: 0.4 },
+    },
+    {
+      x: groups.burst.x, y: groups.burst.y, type: "scattergl", mode: "markers",
+      name: "Burst", marker: { color: CLUSTER_COLORS.burst, size: 3, opacity: 0.5 },
+    },
+    {
+      x: data.centroids.map((c) => c[0]), y: data.centroids.map((c) => c[1]),
+      type: "scattergl", mode: "markers", name: "Centroides",
+      marker: { color: "#000", size: 12, symbol: "x", line: { width: 1 } },
+    },
+  ];
+
+  const L = plotLayout();
+  Plotly.newPlot("cluster-scatter", traces, {
+    ...L,
+    title: { text: "Espacio de features — K-Means (2 grupos)", font: { size: 12.5 }, x: 0.01 },
+    xaxis: { ...L.xaxis, title: { text: data.feature_x, font: { size: 11 } } },
+    yaxis: { ...L.yaxis, title: { text: data.feature_y, font: { size: 11 } } },
+    legend: { x: 0, y: 1.12, orientation: "h", font: { size: 11 } },
+  }, PLOT_CONFIG);
+}
+
+function plotClusterTimeline(data) {
+  const { DANGER, SIGNAL } = themeAccents();
+  const traces = [
+    {
+      x: data.bacav_times, y: data.bacav_times.map(() => 1),
+      type: "scattergl", mode: "markers", name: `BacAv (${data.bacav_times.length})`,
+      marker: { color: DANGER, symbol: "line-ns-open", size: 14, line: { width: 1.4 } },
+    },
+    {
+      x: data.kmeans_times, y: data.kmeans_times.map(() => 0),
+      type: "scattergl", mode: "markers", name: `K-Means (${data.kmeans_times.length})`,
+      marker: { color: SIGNAL, symbol: "line-ns-open", size: 14, line: { width: 1.4 } },
+    },
+  ];
+  const L = plotLayout();
+  Plotly.newPlot("cluster-timeline", traces, {
+    ...L,
+    margin: { l: 70, r: 24, t: 28, b: 36 },
+    title: { text: "Marcadores en el tiempo — BacAv vs K-Means", font: { size: 12.5 }, x: 0.01 },
+    xaxis: { ...L.xaxis, title: { text: "Tiempo (s)", font: { size: 11 } } },
+    yaxis: { ...L.yaxis, tickvals: [0, 1], ticktext: ["K-Means", "BacAv"], range: [-0.5, 1.5] },
+    showlegend: false,
+  }, PLOT_CONFIG);
+}
+
 /* ---------- Export ---------- */
 
 function downloadMarkers() { window.location.href = "/api/export/markers"; }
@@ -523,12 +725,14 @@ function downloadMarkers() { window.location.href = "/api/export/markers"; }
 initTheme();
 refreshGroupColors();
 initPatient();
+initClusterFeatures();
 
 $("upload-btn").addEventListener("click", uploadFile);
 $("analyze-btn").addEventListener("click", runAnalyze);
 $("segment-btn").addEventListener("click", runSegment);
 $("export-btn").addEventListener("click", downloadMarkers);
 $("reorder-btn").addEventListener("click", runReorder);
+$("cluster-btn").addEventListener("click", runCluster);
 
 document.querySelectorAll(".step").forEach((s) => {
   s.addEventListener("click", (e) => {
@@ -542,4 +746,17 @@ document.querySelectorAll(".step").forEach((s) => {
 $("file-input").addEventListener("change", () => {
   const f = $("file-input").files[0];
   if (f) setInfo($("upload-info"), `${f.name} · listo para cargar`, "");
+});
+
+/* Live-preview listeners — update markers as user tweaks params */
+const PREVIEW_INPUTS = [
+  "f-hp", "f-lp", "f-notch",
+  "b-threshold", "b-duration", "b-time-before", "b-time-after", "b-before-a", "b-after-a",
+  "emg-channel",
+];
+PREVIEW_INPUTS.forEach((id) => {
+  const el = $(id);
+  if (!el) return;
+  el.addEventListener("input", schedulePreview);
+  el.addEventListener("change", schedulePreview);
 });
